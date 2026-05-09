@@ -24,6 +24,11 @@ const themeVariables: Record<string, string> = {
 export const metadata: Metadata = {
   title: "Deaimer Platform",
   description: "Deaimer internal platform for admins, managers, candidates, and clients.",
+  icons: {
+    icon: "/favicon/icon.png",
+    shortcut: "/favicon/icon.png",
+    apple: "/favicon/icon.png",
+  },
 };
 
 export default function RootLayout({
