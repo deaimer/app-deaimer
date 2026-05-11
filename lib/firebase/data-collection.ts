@@ -13,7 +13,6 @@ import {
   where,
   type DocumentData,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -166,6 +165,7 @@ export interface DCSessionInput {
   speakerName: string;
   assignmentId: string;
   audioBlob: Blob;
+  mimeType: string;
   duration: number;
   sampleRate: number;
   bitDepth: number;
@@ -363,9 +363,6 @@ function db() {
   return getFirebaseClientServices().firestore;
 }
 
-function storage() {
-  return getFirebaseClientServices().storage;
-}
 
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
@@ -567,11 +564,36 @@ export function subscribeToDCAssignmentsBySpeaker(
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function submitDCSession(input: DCSessionInput): Promise<string> {
+  const { auth } = getFirebaseClientServices();
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error("Not authenticated");
+
   const timestamp = Date.now();
-  const filename = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}.webm`;
-  const storageRef = ref(storage(), filename);
-  await uploadBytes(storageRef, input.audioBlob, { contentType: "audio/webm" });
-  const audioUrl = await getDownloadURL(storageRef);
+  const ext = input.mimeType.includes("mp4") ? "mp4" : "webm";
+  const filename = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}.${ext}`;
+
+  // 1. Get a short-lived presigned PUT URL from our API route
+  const presignRes = await fetch("/api/dc-audio/presign", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ key: filename, contentType: input.mimeType }),
+  });
+  if (!presignRes.ok) throw new Error("Could not get upload URL");
+  const { presignedUrl, publicUrl: audioUrl } = await presignRes.json() as {
+    presignedUrl: string;
+    publicUrl: string;
+  };
+
+  // 2. Upload the blob directly from the browser to R2 — no server roundtrip
+  const uploadRes = await fetch(presignedUrl, {
+    method: "PUT",
+    body: input.audioBlob,
+    headers: { "Content-Type": input.mimeType },
+  });
+  if (!uploadRes.ok) throw new Error("Audio upload failed");
 
   const docRef = await addDoc(collection(db(), "dcSessions"), {
     projectId: input.projectId,

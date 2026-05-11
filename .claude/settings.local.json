@@ -4,7 +4,11 @@
       "Bash(Get-ChildItem -Path \"d:\\\\AI\\\\app-deaimer\" -Force)",
       "Bash(Select-Object Name, PSIsContainer)",
       "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(findstr /i \"aws\\\\|r2\\\\|s3\\\\|firebase-admin\\\\|cloudflare\")",
+      "Bash(npm install *)",
+      "Bash(mkdir -p app/api/dc-audio/presign)",
+      "Bash(ls app/api/)"
     ]
   }
 }

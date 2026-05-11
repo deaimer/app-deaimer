@@ -486,6 +486,7 @@ function Recorder({
   const [state, setState] = useState<RecordState>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioMimeType, setAudioMimeType] = useState("audio/webm");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [levelBars, setLevelBars] = useState<number[]>(Array(24).fill(0));
@@ -526,13 +527,17 @@ function Recorder({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       startVisualizer(stream);
-      const recorder = new MediaRecorder(stream);
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "audio/mp4";
+      const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const blob = new Blob(chunksRef.current, { type: mimeType });
         setAudioBlob(blob);
+        setAudioMimeType(mimeType);
         setAudioUrl(URL.createObjectURL(blob));
         setState("stopped");
         stopVisualizer();
@@ -581,6 +586,7 @@ function Recorder({
         speakerName: speaker.name,
         assignmentId: assignment.id,
         audioBlob,
+        mimeType: audioMimeType,
         duration: elapsed,
         sampleRate: 44100,
         bitDepth: 16,
