@@ -25,6 +25,15 @@ const globalWorkforceSections = [
   { label: "Commissions", section: "commissions" },
 ] as const;
 
+const dataCollectionSections = [
+  { label: "Projects", section: "projects" },
+  { label: "Speakers", section: "speakers" },
+  { label: "Sessions", section: "sessions" },
+  { label: "Transcription", section: "transcription" },
+  { label: "QA Review", section: "qa-review" },
+  { label: "Delivery", section: "delivery" },
+] as const;
+
 function AdminPlatformShellContent() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -124,6 +133,21 @@ function AdminPlatformShellContent() {
           label: item.label,
           href: `/admin?service=${service.slug}&section=${item.section}`,
           active: isGlobal && requestedSection === item.section,
+        })),
+      };
+    }
+
+    if (service.slug === "data-collection-sourcing") {
+      const isDC = requestedService === service.slug;
+
+      return {
+        label: "Data Collection",
+        href: `/admin?service=${service.slug}&section=projects`,
+        active: isDC,
+        children: dataCollectionSections.map((item) => ({
+          label: item.label,
+          href: `/admin?service=${service.slug}&section=${item.section}`,
+          active: isDC && requestedSection === item.section,
         })),
       };
     }

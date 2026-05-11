@@ -1,5 +1,6 @@
 import { type PlatformSideMenuItem } from "@/components/deaimer-site-shell";
 import { SuperAdminPortal } from "@/components/super-admin-portal";
+import { type DCAdminSection } from "@/components/data-collection-admin-panel";
 
 export default async function SuperAdminPage({
   searchParams,
@@ -12,7 +13,8 @@ export default async function SuperAdminPage({
     resolvedSearchParams.view === "team" ||
     resolvedSearchParams.view === "workforce" ||
     resolvedSearchParams.view === "company" ||
-    resolvedSearchParams.view === "careers"
+    resolvedSearchParams.view === "careers" ||
+    resolvedSearchParams.view === "data-collection"
       ? resolvedSearchParams.view
       : "overview";
   const activeTarget =
@@ -30,6 +32,16 @@ export default async function SuperAdminPage({
     resolvedSearchParams.section === "data"
       ? resolvedSearchParams.section
       : "partners";
+
+  const activeDCSection: DCAdminSection =
+    resolvedSearchParams.section === "projects" ||
+    resolvedSearchParams.section === "speakers" ||
+    resolvedSearchParams.section === "sessions" ||
+    resolvedSearchParams.section === "transcription" ||
+    resolvedSearchParams.section === "qa-review" ||
+    resolvedSearchParams.section === "delivery"
+      ? resolvedSearchParams.section
+      : "projects";
 
   const superPlatformMenuItems: PlatformSideMenuItem[] = [
     {
@@ -94,15 +106,50 @@ export default async function SuperAdminPage({
       href: "/super?view=workforce&section=data",
       active: activeView === "workforce" && activeWorkforceSection === "data",
     },
+    {
+      label: "Data Collection",
+      isSectionHeader: true,
+    },
+    {
+      label: "Projects",
+      href: "/super?view=data-collection&section=projects",
+      active: activeView === "data-collection" && activeDCSection === "projects",
+    },
+    {
+      label: "Speakers",
+      href: "/super?view=data-collection&section=speakers",
+      active: activeView === "data-collection" && activeDCSection === "speakers",
+    },
+    {
+      label: "Sessions",
+      href: "/super?view=data-collection&section=sessions",
+      active: activeView === "data-collection" && activeDCSection === "sessions",
+    },
+    {
+      label: "Transcription",
+      href: "/super?view=data-collection&section=transcription",
+      active: activeView === "data-collection" && activeDCSection === "transcription",
+    },
+    {
+      label: "QA Review",
+      href: "/super?view=data-collection&section=qa-review",
+      active: activeView === "data-collection" && activeDCSection === "qa-review",
+    },
+    {
+      label: "Delivery",
+      href: "/super?view=data-collection&section=delivery",
+      active: activeView === "data-collection" && activeDCSection === "delivery",
+    },
   ];
 
   return (
     <SuperAdminPortal
-      initialView={activeView as "overview" | "access" | "team" | "workforce" | "company" | "careers"}
+      initialView={activeView as "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection"}
       initialAccessTarget={activeTarget}
       initialAccessMode={activeMode}
       initialEditingEmail={activeEditingEmail}
       initialWorkforceSection={activeWorkforceSection}
+      initialDCSection={activeDCSection}
       platformSideMenuItems={superPlatformMenuItems}
     />
   );

@@ -83,8 +83,12 @@ import {
   type GlobalWorkforceAdminSection,
 } from "@/components/global-workforce-admin-panel";
 import { PlatformAuthPage } from "@/components/platform-auth-page";
+import {
+  DataCollectionAdminPanel,
+  type DCAdminSection,
+} from "@/components/data-collection-admin-panel";
 
-type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers";
+type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection";
 type AccessTarget = "clients" | "admins";
 type AccessMode = "list" | "new" | "edit";
 type AdminDefaultsTab = "basics" | "services" | "role" | "pay" | "policies";
@@ -1845,6 +1849,7 @@ export function SuperAdminPortal({
   initialAccessMode = "list",
   initialEditingEmail = null,
   initialWorkforceSection = "partners",
+  initialDCSection = "projects",
   platformSideMenuItems = [],
 }: {
   initialView?: SuperView;
@@ -1852,6 +1857,7 @@ export function SuperAdminPortal({
   initialAccessMode?: AccessMode;
   initialEditingEmail?: string | null;
   initialWorkforceSection?: SuperWorkforceSection;
+  initialDCSection?: DCAdminSection;
   platformSideMenuItems?: PlatformSideMenuItem[];
 }) {
   const router = useRouter();
@@ -1874,6 +1880,7 @@ export function SuperAdminPortal({
   const [activeAccessMode, setActiveAccessMode] = useState<AccessMode>(initialAccessMode);
   const [activeWorkforceSection, setActiveWorkforceSection] =
     useState<SuperWorkforceSection>(initialWorkforceSection);
+  const [activeDCSection, setActiveDCSection] = useState<DCAdminSection>(initialDCSection);
   const [clientApprovals, setClientApprovals] = useState<ClientApprovalRecord[]>([]);
   const [adminApprovals, setAdminApprovals] = useState<AdminApprovalRecord[]>([]);
   const [isLoadingClientApprovals, setIsLoadingClientApprovals] = useState(false);
@@ -1910,6 +1917,10 @@ export function SuperAdminPortal({
   useEffect(() => {
     setActiveWorkforceSection(initialWorkforceSection);
   }, [initialWorkforceSection]);
+
+  useEffect(() => {
+    setActiveDCSection(initialDCSection);
+  }, [initialDCSection]);
 
   useEffect(() => {
     if (initialAccessMode !== "edit" || initialAccessTarget !== "admins" || !initialEditingEmail) {
@@ -2539,6 +2550,12 @@ export function SuperAdminPortal({
                   canManageJobs
                 />
               )
+            ) : activeView === "data-collection" ? (
+              <DataCollectionAdminPanel
+                activeUser={activeUser}
+                activeSection={activeDCSection}
+                isSuperAdmin
+              />
             ) : activeView === "company" ? (
               <CompanyPanel activeUser={activeUser} />
             ) : activeView === "careers" ? (

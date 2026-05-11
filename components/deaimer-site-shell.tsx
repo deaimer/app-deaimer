@@ -50,6 +50,7 @@ function getPlatformHomeHref(pathname: string) {
   if (pathname.startsWith("/clients")) return "/clients";
   if (pathname.startsWith("/managers")) return "/managers";
   if (pathname.startsWith("/participants")) return "/participants";
+  if (pathname.startsWith("/speakers")) return "/speakers";
   if (pathname.startsWith("/super")) return "/super";
   return "/";
 }

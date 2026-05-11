@@ -38,10 +38,15 @@ import {
 import { savePortalProfile, type PortalProfile } from "@/lib/firebase/user-profiles";
 import { type AdminApprovalRecord } from "@/lib/firebase/admin-access";
 import { servicePages } from "@/lib/service-pages";
+import { isSuperAdminEmail } from "@/lib/auth/access-control";
 import {
   GlobalWorkforceAdminPanel,
   type GlobalWorkforceAdminSection,
 } from "@/components/global-workforce-admin-panel";
+import {
+  DataCollectionAdminPanel,
+  type DCAdminSection,
+} from "@/components/data-collection-admin-panel";
 
 const fieldClassName =
   "w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary";
@@ -609,6 +614,15 @@ export function AdminPortalWorkspace({
           )
             ? requestedSection
             : "job-posts") as GlobalWorkforceAdminSection)
+      : null;
+
+  const selectedDCSection =
+    selectedServiceSlug === "data-collection-sourcing"
+      ? ((["projects", "speakers", "sessions", "transcription", "qa-review", "delivery"].includes(
+            requestedSection ?? "",
+          )
+            ? requestedSection
+            : "projects") as DCAdminSection)
       : null;
 
   const selectedProfileSectionConfig = profileSections.find(
@@ -2550,10 +2564,19 @@ export function AdminPortalWorkspace({
               />
             ) : null}
 
+            {selectedServiceSlug === "data-collection-sourcing" ? (
+              <DataCollectionAdminPanel
+                activeUser={activeUser}
+                activeSection={selectedDCSection ?? "projects"}
+                isSuperAdmin={isSuperAdminEmail(activeUser.email)}
+              />
+            ) : null}
+
             {selectedServiceSlug &&
             selectedServiceSlug !== "profile" &&
             selectedServiceSlug !== "requests" &&
-            selectedServiceSlug !== "global-managed-workforce"
+            selectedServiceSlug !== "global-managed-workforce" &&
+            selectedServiceSlug !== "data-collection-sourcing"
               ? renderPlaceholderService()
               : null}
         </div>
