@@ -89,14 +89,19 @@ export type DCProjectInput = Omit<DCProject, "id" | "hoursCompleted" | "particip
 export interface DCSpeaker {
   id: string;
   email: string;
+  firstName: string;
+  lastName: string;
   name: string;
+  dateOfBirth: string;
   age: string;
+  country: string;
+  region: string;
+  languages: string[];
+  phoneCountryCode: string;
+  phone: string;
   gender: string;
   dialect: string;
   secondaryDialect: string;
-  region: string;
-  country: string;
-  phone: string;
   bio: string;
   status: DCSpeakerStatus;
   totalHours: number;
@@ -246,18 +251,42 @@ function mapProject(data: DocumentData, id: string): DCProject {
   };
 }
 
+function calcSpeakerAge(dob: string): number {
+  if (!dob) return 0;
+  const today = new Date();
+  const birth = new Date(dob + "T00:00:00");
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
 function mapSpeaker(data: DocumentData, id: string): DCSpeaker {
+  const firstName = String(data.firstName ?? "");
+  const lastName = String(data.lastName ?? "");
+  const legacyName = String(data.name ?? "");
+  const name = (firstName || lastName) ? `${firstName} ${lastName}`.trim() : legacyName;
+  const dateOfBirth = String(data.dateOfBirth ?? "");
   return {
     id,
     email: String(data.email ?? id),
-    name: String(data.name ?? ""),
-    age: String(data.age ?? ""),
+    firstName,
+    lastName,
+    name,
+    dateOfBirth,
+    age: dateOfBirth ? String(calcSpeakerAge(dateOfBirth)) : String(data.age ?? ""),
+    country: String(data.country ?? ""),
+    region: String(data.region ?? ""),
+    languages: Array.isArray(data.languages)
+      ? (data.languages as unknown[]).map(String).filter(Boolean)
+      : data.language
+        ? [String(data.language)]
+        : [],
+    phoneCountryCode: String(data.phoneCountryCode ?? ""),
+    phone: String(data.phone ?? ""),
     gender: String(data.gender ?? ""),
     dialect: String(data.dialect ?? ""),
     secondaryDialect: String(data.secondaryDialect ?? ""),
-    region: String(data.region ?? ""),
-    country: String(data.country ?? ""),
-    phone: String(data.phone ?? ""),
     bio: String(data.bio ?? ""),
     status: (["pending", "active", "suspended"].includes(data.status)
       ? data.status

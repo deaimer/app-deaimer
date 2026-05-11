@@ -2,6 +2,7 @@
 
 import {
   FormEvent,
+  ReactNode,
   useEffect,
   useRef,
   useState,
@@ -40,7 +41,155 @@ type SpeakerSection = "dashboard" | "tasks" | "record" | "profile" | "guidelines
 
 const VALID_SECTIONS: SpeakerSection[] = ["dashboard", "tasks", "record", "profile", "guidelines"];
 
+// ─── Static data ──────────────────────────────────────────────────────────────
+
+const COUNTRIES: { name: string; dial: string }[] = [
+  { name: "Afghanistan", dial: "+93" },
+  { name: "Albania", dial: "+355" },
+  { name: "Algeria", dial: "+213" },
+  { name: "Argentina", dial: "+54" },
+  { name: "Armenia", dial: "+374" },
+  { name: "Australia", dial: "+61" },
+  { name: "Austria", dial: "+43" },
+  { name: "Azerbaijan", dial: "+994" },
+  { name: "Bahrain", dial: "+973" },
+  { name: "Bangladesh", dial: "+880" },
+  { name: "Belarus", dial: "+375" },
+  { name: "Belgium", dial: "+32" },
+  { name: "Bolivia", dial: "+591" },
+  { name: "Bosnia and Herzegovina", dial: "+387" },
+  { name: "Brazil", dial: "+55" },
+  { name: "Bulgaria", dial: "+359" },
+  { name: "Cambodia", dial: "+855" },
+  { name: "Cameroon", dial: "+237" },
+  { name: "Canada", dial: "+1" },
+  { name: "Chile", dial: "+56" },
+  { name: "China", dial: "+86" },
+  { name: "Colombia", dial: "+57" },
+  { name: "Croatia", dial: "+385" },
+  { name: "Czech Republic", dial: "+420" },
+  { name: "Denmark", dial: "+45" },
+  { name: "Ecuador", dial: "+593" },
+  { name: "Egypt", dial: "+20" },
+  { name: "Ethiopia", dial: "+251" },
+  { name: "Finland", dial: "+358" },
+  { name: "France", dial: "+33" },
+  { name: "Georgia", dial: "+995" },
+  { name: "Germany", dial: "+49" },
+  { name: "Ghana", dial: "+233" },
+  { name: "Greece", dial: "+30" },
+  { name: "Hungary", dial: "+36" },
+  { name: "India", dial: "+91" },
+  { name: "Indonesia", dial: "+62" },
+  { name: "Iran", dial: "+98" },
+  { name: "Iraq", dial: "+964" },
+  { name: "Ireland", dial: "+353" },
+  { name: "Israel", dial: "+972" },
+  { name: "Italy", dial: "+39" },
+  { name: "Japan", dial: "+81" },
+  { name: "Jordan", dial: "+962" },
+  { name: "Kazakhstan", dial: "+7" },
+  { name: "Kenya", dial: "+254" },
+  { name: "Kuwait", dial: "+965" },
+  { name: "Kyrgyzstan", dial: "+996" },
+  { name: "Lebanon", dial: "+961" },
+  { name: "Libya", dial: "+218" },
+  { name: "Malaysia", dial: "+60" },
+  { name: "Mexico", dial: "+52" },
+  { name: "Morocco", dial: "+212" },
+  { name: "Mozambique", dial: "+258" },
+  { name: "Myanmar", dial: "+95" },
+  { name: "Nepal", dial: "+977" },
+  { name: "Netherlands", dial: "+31" },
+  { name: "New Zealand", dial: "+64" },
+  { name: "Nigeria", dial: "+234" },
+  { name: "Norway", dial: "+47" },
+  { name: "Oman", dial: "+968" },
+  { name: "Pakistan", dial: "+92" },
+  { name: "Palestine", dial: "+970" },
+  { name: "Peru", dial: "+51" },
+  { name: "Philippines", dial: "+63" },
+  { name: "Poland", dial: "+48" },
+  { name: "Portugal", dial: "+351" },
+  { name: "Qatar", dial: "+974" },
+  { name: "Romania", dial: "+40" },
+  { name: "Russia", dial: "+7" },
+  { name: "Saudi Arabia", dial: "+966" },
+  { name: "Senegal", dial: "+221" },
+  { name: "Serbia", dial: "+381" },
+  { name: "Singapore", dial: "+65" },
+  { name: "Slovakia", dial: "+421" },
+  { name: "Somalia", dial: "+252" },
+  { name: "South Africa", dial: "+27" },
+  { name: "South Korea", dial: "+82" },
+  { name: "Spain", dial: "+34" },
+  { name: "Sri Lanka", dial: "+94" },
+  { name: "Sudan", dial: "+249" },
+  { name: "Sweden", dial: "+46" },
+  { name: "Switzerland", dial: "+41" },
+  { name: "Syria", dial: "+963" },
+  { name: "Taiwan", dial: "+886" },
+  { name: "Tajikistan", dial: "+992" },
+  { name: "Tanzania", dial: "+255" },
+  { name: "Thailand", dial: "+66" },
+  { name: "Tunisia", dial: "+216" },
+  { name: "Turkey", dial: "+90" },
+  { name: "Turkmenistan", dial: "+993" },
+  { name: "Uganda", dial: "+256" },
+  { name: "Ukraine", dial: "+380" },
+  { name: "United Arab Emirates", dial: "+971" },
+  { name: "United Kingdom", dial: "+44" },
+  { name: "United States", dial: "+1" },
+  { name: "Uzbekistan", dial: "+998" },
+  { name: "Venezuela", dial: "+58" },
+  { name: "Vietnam", dial: "+84" },
+  { name: "Yemen", dial: "+967" },
+  { name: "Zimbabwe", dial: "+263" },
+];
+
+const LANGUAGES = [
+  "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani",
+  "Bangla (Bengali)", "Belarusian", "Bulgarian", "Burmese",
+  "Catalan", "Chinese (Cantonese)", "Chinese (Mandarin)", "Croatian", "Czech",
+  "Danish", "Dari / Afghan Persian", "Dutch",
+  "English", "Estonian",
+  "Filipino / Tagalog", "Finnish", "French",
+  "Georgian", "German", "Greek", "Gujarati",
+  "Hausa", "Hebrew", "Hindi", "Hungarian",
+  "Indonesian", "Italian",
+  "Japanese",
+  "Kannada", "Kazakh", "Khmer", "Korean", "Kurdish",
+  "Lao", "Latvian", "Lithuanian",
+  "Macedonian", "Malay", "Malayalam", "Maltese", "Marathi",
+  "Nepali", "Norwegian",
+  "Odia", "Pashto", "Persian (Farsi)", "Polish", "Portuguese", "Punjabi",
+  "Romanian", "Russian",
+  "Serbian", "Sinhala", "Slovak", "Slovenian", "Somali", "Spanish", "Swahili", "Swedish",
+  "Tamil", "Telugu", "Thai", "Turkish", "Turkmen",
+  "Ukrainian", "Urdu", "Uzbek",
+  "Vietnamese",
+  "Welsh",
+  "Yoruba",
+  "Zulu",
+];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function calcAge(dob: string): number {
+  if (!dob) return 0;
+  const today = new Date();
+  const birth = new Date(dob + "T00:00:00");
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function maxDOBDate(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().split("T")[0];
+}
 
 function formatDuration(sec: number) {
   const h = Math.floor(sec / 3600);
@@ -60,8 +209,29 @@ function formatDate(val: unknown): string {
   }
 }
 
+function formatDOB(dob: string): string {
+  if (!dob) return "—";
+  try {
+    return new Date(dob + "T00:00:00").toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  } catch {
+    return dob;
+  }
+}
+
 function isProfileComplete(speaker: DCSpeaker) {
-  return !!(speaker.name && speaker.gender && speaker.dialect && speaker.region);
+  return !!(
+    speaker.firstName &&
+    speaker.lastName &&
+    speaker.dateOfBirth &&
+    speaker.country &&
+    speaker.region &&
+    speaker.languages.length > 0 &&
+    speaker.phone
+  );
 }
 
 // ─── Google SVG ───────────────────────────────────────────────────────────────
@@ -80,10 +250,10 @@ function GoogleMark() {
 // ─── Bottom tab bar (mobile only) ─────────────────────────────────────────────
 
 const TABS: { section: SpeakerSection; label: string; icon: string }[] = [
-  { section: "dashboard", label: "Home",      icon: "⊞" },
-  { section: "tasks",     label: "Tasks",     icon: "☑" },
-  { section: "record",    label: "Record",    icon: "⏺" },
-  { section: "profile",   label: "Profile",   icon: "◎" },
+  { section: "dashboard", label: "Home",    icon: "⊞" },
+  { section: "tasks",     label: "Tasks",   icon: "☑" },
+  { section: "record",    label: "Record",  icon: "⏺" },
+  { section: "profile",   label: "Profile", icon: "◎" },
 ];
 
 function BottomTabBar({
@@ -94,7 +264,10 @@ function BottomTabBar({
   onNavigate: (s: SpeakerSection) => void;
 }) {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-200 bg-white lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <nav
+      className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-200 bg-white lg:hidden"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
       {TABS.map((tab) => {
         const isRecord = tab.section === "record";
         const isActive = active === tab.section;
@@ -105,11 +278,7 @@ function BottomTabBar({
             onClick={() => onNavigate(tab.section)}
             className={[
               "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition",
-              isRecord
-                ? "relative"
-                : isActive
-                  ? "text-primary"
-                  : "text-muted",
+              isRecord ? "relative" : isActive ? "text-primary" : "text-muted",
             ].join(" ")}
           >
             {isRecord ? (
@@ -143,26 +312,14 @@ function Dashboard({
   sessions: DCSession[];
   onNavigate: (s: SpeakerSection) => void;
 }) {
-  const firstName = speaker.name?.split(" ")[0] || "there";
+  const firstName = speaker.firstName || speaker.name?.split(" ")[0] || "there";
   const totalHours = sessions.reduce((sum, s) => sum + s.duration / 3600, 0);
   const activeProjects = assignments.filter((a) => a.status === "active").length;
   const pendingTasks = assignments.filter((a) => a.status === "active" && a.hoursCompleted < a.hoursTarget).length;
   const recentSessions = sessions.slice(0, 5);
-  const profileComplete = isProfileComplete(speaker);
 
   return (
     <div className="space-y-5">
-      {!profileComplete && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-          <span className="mt-0.5 text-amber-500">⚠</span>
-          <div>
-            <p className="text-sm font-semibold text-amber-900">Complete your profile</p>
-            <p className="text-sm text-amber-800">Fill in your name, gender, dialect, and region — this data is embedded in every recording.</p>
-            <button type="button" onClick={() => onNavigate("profile")} className="mt-2 text-xs font-semibold text-amber-900 underline">Go to profile →</button>
-          </div>
-        </div>
-      )}
-
       <div>
         <h1 className="text-xl font-semibold text-ink sm:text-2xl">Welcome back, {firstName}</h1>
         <p className="mt-0.5 text-sm text-muted">Your recording activity at a glance.</p>
@@ -171,9 +328,9 @@ function Dashboard({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           { label: "Total hours", value: totalHours.toFixed(2) + "h" },
-          { label: "Sessions", value: String(sessions.length) },
-          { label: "Active projects", value: String(activeProjects) },
-          { label: "Pending tasks", value: String(pendingTasks) },
+          { label: "Sessions",     value: String(sessions.length) },
+          { label: "Active tasks", value: String(activeProjects) },
+          { label: "Pending",      value: String(pendingTasks) },
         ].map((card) => (
           <article key={card.label} className="rounded-xl border border-slate-200 bg-white px-4 py-4">
             <p className="text-[10px] font-medium uppercase tracking-widest text-muted/60">{card.label}</p>
@@ -214,7 +371,13 @@ function Dashboard({
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted">{formatDuration(s.duration)}</span>
-                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${s.qaStatus === "approved" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : s.qaStatus === "rejected" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-white text-muted"}`}>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                    s.qaStatus === "approved"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : s.qaStatus === "rejected"
+                        ? "border-rose-200 bg-rose-50 text-rose-800"
+                        : "border-slate-200 bg-white text-muted"
+                  }`}>
                     {s.qaStatus}
                   </span>
                 </div>
@@ -243,7 +406,7 @@ function MyTasks({
         <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-14 text-center">
           <p className="text-2xl">☑</p>
           <p className="mt-3 text-sm font-medium text-ink">No tasks yet</p>
-          <p className="mt-1 text-sm text-muted">You haven't been assigned to any projects. Check back soon.</p>
+          <p className="mt-1 text-sm text-muted">You haven&apos;t been assigned to any projects. Check back soon.</p>
         </div>
       </div>
     );
@@ -280,7 +443,7 @@ function MyTasks({
                 <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted">
                   <span>{a.sessionsCount} session{a.sessionsCount !== 1 ? "s" : ""}</span>
                   {a.deadline && <span>Deadline: {a.deadline}</span>}
-                  {!done && <span className="text-primary font-medium">{remaining.toFixed(2)}h remaining</span>}
+                  {!done && <span className="font-medium text-primary">{remaining.toFixed(2)}h remaining</span>}
                 </div>
               </div>
 
@@ -291,7 +454,7 @@ function MyTasks({
                 className={[
                   "mt-5 w-full rounded-full py-3 text-sm font-semibold transition",
                   done
-                    ? "bg-slate-100 text-muted cursor-not-allowed"
+                    ? "cursor-not-allowed bg-slate-100 text-muted"
                     : "bg-primary text-white hover:bg-primaryStrong active:scale-[0.98]",
                 ].join(" ")}
               >
@@ -333,8 +496,6 @@ function Recorder({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-
-  const profileComplete = isProfileComplete(speaker);
 
   function stopVisualizer() {
     if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
@@ -425,7 +586,7 @@ function Recorder({
         bitDepth: 16,
         gender: speaker.gender,
         age: speaker.age,
-        dialect: speaker.dialect,
+        dialect: speaker.languages[0] || speaker.dialect,
         region: speaker.region,
       });
       setState("done");
@@ -451,11 +612,7 @@ function Recorder({
           <p className="text-3xl">⏺</p>
           <p className="mt-3 text-sm font-medium text-ink">No task selected</p>
           <p className="mt-1 text-sm text-muted">Pick a task first to start recording.</p>
-          <button
-            type="button"
-            onClick={onPickTask}
-            className="mt-5 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong"
-          >
+          <button type="button" onClick={onPickTask} className="mt-5 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
             Go to Tasks
           </button>
         </div>
@@ -486,12 +643,6 @@ function Recorder({
         <span className="rounded-full border border-slate-200 bg-panelStrong px-3 py-0.5 text-xs text-muted">{assignment.projectName}</span>
       </div>
 
-      {!profileComplete && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          ⚠ Your profile is incomplete. Metadata fields will be empty for this session.
-        </div>
-      )}
-
       {assignment.promptText && (
         <div className="rounded-[1.25rem] border border-blue-100 bg-blue-50 p-4">
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">Prompt</p>
@@ -504,8 +655,8 @@ function Recorder({
           <div className="rounded-[1.25rem] border border-rose-200 bg-rose-50 p-4">
             <p className="font-semibold text-rose-900">Microphone access blocked</p>
             <p className="mt-1 text-sm text-rose-800">To fix this:</p>
-            <ol className="mt-2 list-decimal list-inside space-y-1 text-sm text-rose-800">
-              <li>Tap the <strong>lock icon</strong> in your browser's address bar</li>
+            <ol className="mt-2 list-inside list-decimal space-y-1 text-sm text-rose-800">
+              <li>Tap the <strong>lock icon</strong> in your browser&apos;s address bar</li>
               <li>Set <strong>Microphone</strong> to <strong>Allow</strong></li>
               <li>Refresh and try again</li>
             </ol>
@@ -515,44 +666,27 @@ function Recorder({
         )
       )}
 
-      {/* Recorder card */}
-      <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white py-10 px-4">
-        {/* Timer */}
+      <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
         <p className="font-mono text-5xl font-light tracking-tight text-ink sm:text-6xl">
           {formatDuration(elapsed)}
         </p>
-
-        {/* Waveform */}
         <div className="flex h-10 items-end gap-[2px]" aria-hidden="true">
           {levelBars.map((h, i) => (
             <div
               key={i}
-              className={[
-                "w-[3px] rounded-full transition-all duration-75",
-                state === "recording" ? "bg-primary" : "bg-slate-200",
-              ].join(" ")}
+              className={["w-[3px] rounded-full transition-all duration-75", state === "recording" ? "bg-primary" : "bg-slate-200"].join(" ")}
               style={{ height: `${Math.max(4, h)}%` }}
             />
           ))}
         </div>
-
-        {/* Record / Stop */}
         {state === "idle" && (
-          <button
-            type="button"
-            onClick={() => void startRecording()}
-            className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-white shadow-[0_4px_24px_rgba(43,133,240,0.4)] active:scale-95 hover:bg-primaryStrong"
-          >
+          <button type="button" onClick={() => void startRecording()} className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-white shadow-[0_4px_24px_rgba(43,133,240,0.4)] hover:bg-primaryStrong active:scale-95">
             <span className="text-2xl">⏺</span>
           </button>
         )}
         {state === "recording" && (
           <>
-            <button
-              type="button"
-              onClick={stopRecording}
-              className="flex h-20 w-20 items-center justify-center rounded-full bg-rose-600 text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] active:scale-95 hover:bg-rose-700"
-            >
+            <button type="button" onClick={stopRecording} className="flex h-20 w-20 items-center justify-center rounded-full bg-rose-600 text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 active:scale-95">
               <span className="text-2xl">⏹</span>
             </button>
             <p className="animate-pulse text-xs text-muted">Recording… speak naturally</p>
@@ -560,19 +694,14 @@ function Recorder({
         )}
       </div>
 
-      {/* Playback */}
       {state === "stopped" && audioUrl && (
-        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4 space-y-4">
+        <div className="space-y-4 rounded-[1.25rem] border border-slate-200 bg-white p-4">
           <p className="text-sm font-semibold text-ink">Playback</p>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio controls src={audioUrl} className="w-full rounded-xl" />
           <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={reRecord} className="rounded-full border border-slate-200 py-3 text-sm font-semibold text-muted hover:bg-slate-50 active:scale-[0.98]">
-              Re-record
-            </button>
-            <button type="button" onClick={() => void handleSubmit()} className="rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong active:scale-[0.98]">
-              Submit ✓
-            </button>
+            <button type="button" onClick={reRecord} className="rounded-full border border-slate-200 py-3 text-sm font-semibold text-muted hover:bg-slate-50 active:scale-[0.98]">Re-record</button>
+            <button type="button" onClick={() => void handleSubmit()} className="rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong active:scale-[0.98]">Submit ✓</button>
           </div>
         </div>
       )}
@@ -587,38 +716,193 @@ function Recorder({
   );
 }
 
+// ─── Profile sub-components ───────────────────────────────────────────────────
+
+const fieldCls = "w-full rounded-[1rem] border border-slate-200 bg-panelStrong px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/40 focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/10";
+const labelCls = "mb-1.5 block text-[13px] font-medium text-ink";
+
+function SectionCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+      <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-5 py-3.5">
+        <div className="h-3.5 w-[3px] shrink-0 rounded-full bg-primary" />
+        <span className="text-[13px] font-semibold text-ink">{title}</span>
+      </div>
+      <div className="space-y-4 p-5">{children}</div>
+    </div>
+  );
+}
+
+function LanguagePicker({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (v: string[]) => void;
+}) {
+  const [pickKey, setPickKey] = useState(0);
+
+  return (
+    <div className="space-y-3">
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {selected.map((lang) => (
+            <span
+              key={lang}
+              className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary"
+            >
+              {lang}
+              <button
+                type="button"
+                onClick={() => onChange(selected.filter((l) => l !== lang))}
+                aria-label={`Remove ${lang}`}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[15px] leading-none text-primary/50 transition hover:bg-primary/20 hover:text-primary"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <select
+        key={pickKey}
+        className={fieldCls}
+        defaultValue=""
+        onChange={(e) => {
+          const val = e.target.value;
+          if (val && !selected.includes(val)) {
+            onChange([...selected, val]);
+            setPickKey((k) => k + 1);
+          }
+        }}
+      >
+        <option value="" disabled>
+          {selected.length === 0 ? "Select a language…" : "+ Add another language…"}
+        </option>
+        {LANGUAGES.filter((l) => !selected.includes(l)).map((l) => (
+          <option key={l} value={l}>{l}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
-const fieldCls = "w-full rounded-[1rem] border border-slate-200 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/50 focus:border-primary focus:ring-1 focus:ring-primary/20";
-
-function Profile({ speaker, onSaved }: { speaker: DCSpeaker; onSaved: (s: DCSpeaker) => void }) {
+function Profile({
+  speaker,
+  onSaved,
+  isOnboarding,
+}: {
+  speaker: DCSpeaker;
+  onSaved: (s: DCSpeaker) => void;
+  isOnboarding: boolean;
+}) {
+  const [editing, setEditing] = useState(isOnboarding);
   const [form, setForm] = useState({
-    name: speaker.name,
-    age: speaker.age,
-    gender: speaker.gender,
-    dialect: speaker.dialect,
-    secondaryDialect: speaker.secondaryDialect,
-    region: speaker.region,
+    firstName: speaker.firstName,
+    lastName: speaker.lastName,
+    dateOfBirth: speaker.dateOfBirth,
     country: speaker.country,
+    region: speaker.region,
+    languages: speaker.languages,
+    phoneCountryCode:
+      speaker.phoneCountryCode ||
+      (COUNTRIES.find((c) => c.name === speaker.country)?.dial ?? ""),
     phone: speaker.phone,
-    bio: speaker.bio,
   });
   const [saving, setSaving] = useState(false);
-  const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
 
-  function set(key: string, value: string) {
+  function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function handleCountryChange(country: string) {
+    const dial = COUNTRIES.find((c) => c.name === country)?.dial ?? form.phoneCountryCode;
+    setForm((f) => ({ ...f, country, phoneCountryCode: dial }));
+  }
+
+  function cancelEdit() {
+    setForm({
+      firstName: speaker.firstName,
+      lastName: speaker.lastName,
+      dateOfBirth: speaker.dateOfBirth,
+      country: speaker.country,
+      region: speaker.region,
+      languages: speaker.languages,
+      phoneCountryCode:
+        speaker.phoneCountryCode ||
+        (COUNTRIES.find((c) => c.name === speaker.country)?.dial ?? ""),
+      phone: speaker.phone,
+    });
+    setError("");
+    setEditing(false);
   }
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      setError("Please enter your first and last name.");
+      return;
+    }
+    if (!form.dateOfBirth) {
+      setError("Please enter your date of birth.");
+      return;
+    }
+    if (calcAge(form.dateOfBirth) < 18) {
+      setError("You must be at least 18 years old to participate.");
+      return;
+    }
+    if (!form.country) {
+      setError("Please select your country.");
+      return;
+    }
+    if (!form.region.trim()) {
+      setError("Please enter your city or region.");
+      return;
+    }
+    if (form.languages.length === 0) {
+      setError("Please select at least one language.");
+      return;
+    }
+    if (!form.phone.trim()) {
+      setError("Please enter your phone number.");
+      return;
+    }
+
     setSaving(true);
     setError("");
-    setSuccess(false);
     try {
-      await updateDCSpeakerProfile(speaker.email, form);
-      setSuccess(true);
+      const firstName = form.firstName.trim();
+      const lastName = form.lastName.trim();
+      const updatedName = `${firstName} ${lastName}`;
+      await updateDCSpeakerProfile(speaker.email, {
+        firstName,
+        lastName,
+        name: updatedName,
+        dateOfBirth: form.dateOfBirth,
+        age: String(calcAge(form.dateOfBirth)),
+        country: form.country,
+        region: form.region.trim(),
+        languages: form.languages,
+        phoneCountryCode: form.phoneCountryCode,
+        phone: form.phone.trim(),
+      });
+      onSaved({
+        ...speaker,
+        firstName,
+        lastName,
+        name: updatedName,
+        dateOfBirth: form.dateOfBirth,
+        age: String(calcAge(form.dateOfBirth)),
+        country: form.country,
+        region: form.region.trim(),
+        languages: form.languages,
+        phoneCountryCode: form.phoneCountryCode,
+        phone: form.phone.trim(),
+      });
+      setEditing(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save profile.");
     } finally {
@@ -626,79 +910,265 @@ function Profile({ speaker, onSaved }: { speaker: DCSpeaker; onSaved: (s: DCSpea
     }
   }
 
-  return (
-    <div className="space-y-5">
-      <h1 className="text-xl font-semibold text-ink sm:text-2xl">Profile</h1>
+  // ── Read-only view ────────────────────────────────────────────────────────
 
-      <div className="rounded-xl border border-slate-200 bg-panelStrong px-4 py-3 text-sm">
-        <p className="text-muted"><span className="font-medium text-ink">Account email:</span> {speaker.email}</p>
+  if (!editing) {
+    const initials = [speaker.firstName?.[0], speaker.lastName?.[0]]
+      .filter(Boolean)
+      .join("")
+      .toUpperCase() || "?";
+
+    return (
+      <div className="space-y-3">
+        {/* Hero card */}
+        <div className="relative overflow-hidden rounded-[1.75rem] border border-slate-200 bg-gradient-to-br from-primary/[0.07] via-primary/[0.03] to-transparent p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-[#4ea3ff] text-lg font-bold text-white shadow-sm">
+                {initials}
+              </div>
+              <div>
+                <p className="text-base font-semibold text-ink">{speaker.firstName} {speaker.lastName}</p>
+                <p className="mt-0.5 text-sm text-muted">{speaker.email}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="shrink-0 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-muted shadow-sm hover:bg-slate-50 active:scale-95"
+            >
+              Edit
+            </button>
+          </div>
+
+          {/* Stat pills */}
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            {speaker.age && (
+              <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink shadow-sm">
+                {speaker.age} yrs
+              </span>
+            )}
+            {speaker.country && (
+              <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink shadow-sm">
+                {speaker.country}
+              </span>
+            )}
+            {speaker.region && (
+              <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink shadow-sm">
+                {speaker.region}
+              </span>
+            )}
+            {speaker.languages.length > 0 && (
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                {speaker.languages.length} language{speaker.languages.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Details list */}
+        <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Date of birth</p>
+            <p className="text-sm font-medium text-ink">{formatDOB(speaker.dateOfBirth)}</p>
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Age</p>
+            <p className="text-sm font-medium text-ink">{speaker.age ? `${speaker.age} years old` : "—"}</p>
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Country</p>
+            <p className="text-sm font-medium text-ink">{speaker.country || "—"}</p>
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">City / Region</p>
+            <p className="text-sm font-medium text-ink">{speaker.region || "—"}</p>
+          </div>
+          <div className="px-5 py-4 border-b border-slate-100">
+            <p className="mb-2.5 text-xs font-medium text-muted">Languages</p>
+            {speaker.languages.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {speaker.languages.map((l) => (
+                  <span key={l} className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                    {l}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm font-medium text-ink">—</p>
+            )}
+          </div>
+          <div className="flex items-center justify-between px-5 py-4">
+            <p className="text-xs font-medium text-muted">Phone</p>
+            <p className="text-sm font-medium text-ink">
+              {[speaker.phoneCountryCode, speaker.phone].filter(Boolean).join(" ") || "—"}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Edit / Onboarding form ────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      {isOnboarding ? (
+        <div className="overflow-hidden rounded-[1.75rem] border border-primary/10 bg-gradient-to-br from-primary/[0.08] via-primary/[0.04] to-transparent px-5 pb-6 pt-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">Speaker Portal</p>
+          <h1 className="mt-2 text-2xl font-semibold text-ink">Set up your profile</h1>
+          <p className="mt-1.5 text-sm leading-6 text-muted">
+            Your details are embedded in every recording — fill these in correctly.
+          </p>
+        </div>
+      ) : (
+        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Edit Profile</h1>
+      )}
+
+      {/* Signed-in email */}
+      <div className="flex items-center gap-3 rounded-[1rem] border border-slate-200 bg-white px-4 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+          {speaker.email[0].toUpperCase()}
+        </div>
+        <div>
+          <p className="text-[11px] text-muted">Signed in as</p>
+          <p className="text-sm font-medium text-ink">{speaker.email}</p>
+        </div>
       </div>
 
-      {!isProfileComplete(speaker) && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          ⚠ Please fill in your name, gender, dialect, and region. This data is embedded in every recording.
+      {error && (
+        <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          {error}
         </div>
       )}
-      {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div>}
-      {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">Profile saved ✓</div>}
 
-      <form onSubmit={(e) => void handleSave(e)} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
+      <form onSubmit={(e) => void handleSave(e)} className="space-y-3">
+        {/* Personal details */}
+        <SectionCard title="Personal details">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className={labelCls}>First name <span className="text-primary">*</span></span>
+              <input
+                className={fieldCls}
+                placeholder="Ali"
+                value={form.firstName}
+                onChange={(e) => set("firstName", e.target.value)}
+                required
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Last name <span className="text-primary">*</span></span>
+              <input
+                className={fieldCls}
+                placeholder="Ahmed"
+                value={form.lastName}
+                onChange={(e) => set("lastName", e.target.value)}
+                required
+              />
+            </label>
+          </div>
           <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Full name <span className="text-primary">*</span></span>
-            <input className={fieldCls} value={form.name} onChange={(e) => set("name", e.target.value)} required />
+            <span className={labelCls}>Date of birth <span className="text-primary">*</span></span>
+            <input
+              type="date"
+              max={maxDOBDate()}
+              className={fieldCls}
+              value={form.dateOfBirth}
+              onChange={(e) => set("dateOfBirth", e.target.value)}
+              required
+            />
+            {form.dateOfBirth && (
+              <p className="mt-1.5 text-xs text-muted">
+                Age: <span className="font-semibold text-ink">{calcAge(form.dateOfBirth)} years old</span>
+              </p>
+            )}
+          </label>
+        </SectionCard>
+
+        {/* Location */}
+        <SectionCard title="Where are you based?">
+          <label className="block">
+            <span className={labelCls}>Country <span className="text-primary">*</span></span>
+            <select
+              className={fieldCls}
+              value={form.country}
+              onChange={(e) => handleCountryChange(e.target.value)}
+              required
+            >
+              <option value="">Select country…</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.name} value={c.name}>{c.name}</option>
+              ))}
+            </select>
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Age</span>
-            <input type="number" min={16} max={80} className={fieldCls} value={form.age} onChange={(e) => set("age", e.target.value)} />
+            <span className={labelCls}>City / Region <span className="text-primary">*</span></span>
+            <input
+              className={fieldCls}
+              placeholder="e.g. Lahore, London, Dubai"
+              value={form.region}
+              onChange={(e) => set("region", e.target.value)}
+              required
+            />
           </label>
+        </SectionCard>
+
+        {/* Languages */}
+        <SectionCard title="Languages you speak">
+          <p className="text-xs text-muted -mt-1">Add all languages you can record in — you can add more than one.</p>
+          <LanguagePicker
+            selected={form.languages}
+            onChange={(langs) => set("languages", langs)}
+          />
+        </SectionCard>
+
+        {/* Phone */}
+        <SectionCard title="Phone number">
+          <div>
+            <span className={labelCls}>Number <span className="text-primary">*</span></span>
+            <div className="grid grid-cols-[148px_1fr] gap-2">
+              <select
+                className={fieldCls}
+                value={form.phoneCountryCode}
+                onChange={(e) => set("phoneCountryCode", e.target.value)}
+              >
+                <option value="">Code…</option>
+                {COUNTRIES.map((c) => (
+                  <option key={c.name} value={c.dial}>{c.dial} ({c.name})</option>
+                ))}
+              </select>
+              <input
+                type="tel"
+                className={fieldCls}
+                placeholder="3001234567"
+                value={form.phone}
+                onChange={(e) => set("phone", e.target.value)}
+                required
+              />
+            </div>
+          </div>
+        </SectionCard>
+
+        {/* Actions */}
+        <div className={["pt-1", !isOnboarding ? "grid grid-cols-2 gap-3" : ""].join(" ")}>
+          {!isOnboarding && (
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="rounded-full border border-slate-200 py-3.5 text-sm font-semibold text-muted hover:bg-slate-50 active:scale-[0.98]"
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={saving}
+            className="w-full rounded-full bg-primary py-3.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(43,133,240,0.3)] hover:bg-primaryStrong disabled:opacity-60 active:scale-[0.98]"
+          >
+            {saving ? "Saving…" : isOnboarding ? "Complete Profile →" : "Save Changes"}
+          </button>
         </div>
-
-        <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium text-ink">Gender <span className="text-primary">*</span></span>
-          <select className={fieldCls} value={form.gender} onChange={(e) => set("gender", e.target.value)} required>
-            <option value="">Select…</option>
-            <option value="male">Male</option>
-            <option value="female">Female</option>
-            <option value="prefer-not-to-say">Prefer not to say</option>
-          </select>
-        </label>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Primary dialect <span className="text-primary">*</span></span>
-            <input className={fieldCls} placeholder="e.g. Pakistani Urdu, Gulf Arabic" value={form.dialect} onChange={(e) => set("dialect", e.target.value)} required />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Secondary dialect</span>
-            <input className={fieldCls} placeholder="Optional" value={form.secondaryDialect} onChange={(e) => set("secondaryDialect", e.target.value)} />
-          </label>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Region / City <span className="text-primary">*</span></span>
-            <input className={fieldCls} value={form.region} onChange={(e) => set("region", e.target.value)} required />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Country</span>
-            <input className={fieldCls} value={form.country} onChange={(e) => set("country", e.target.value)} />
-          </label>
-        </div>
-
-        <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium text-ink">Phone</span>
-          <input type="tel" className={fieldCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} />
-        </label>
-
-        <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium text-ink">Short bio</span>
-          <textarea rows={3} className={fieldCls} placeholder="A brief description about yourself…" value={form.bio} onChange={(e) => set("bio", e.target.value)} />
-        </label>
-
-        <button type="submit" disabled={saving} className="w-full rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-60 active:scale-[0.98]">
-          {saving ? "Saving…" : "Save Profile"}
-        </button>
       </form>
     </div>
   );
@@ -840,18 +1310,29 @@ function SpeakerPortal({ user }: { user: User }) {
     );
   }
 
-  const speakerMenuItems: PlatformSideMenuItem[] = [
-    { label: "Main",        isSectionHeader: true },
-    { label: "Dashboard",   href: "/speakers?section=dashboard",  active: section === "dashboard" },
-    { label: "My Tasks",    href: "/speakers?section=tasks",      active: section === "tasks" },
-    { label: "Record",      href: "/speakers?section=record",     active: section === "record" },
-    { label: "Account",     isSectionHeader: true },
-    { label: "Profile",     href: "/speakers?section=profile",    active: section === "profile" },
-    { label: "Guidelines",  href: "/speakers?section=guidelines", active: section === "guidelines" },
-  ];
+  const profileComplete = isProfileComplete(speaker);
+  const effectiveSection: SpeakerSection = profileComplete ? section : "profile";
+
+  const speakerMenuItems: PlatformSideMenuItem[] = profileComplete
+    ? [
+        { label: "Main",       isSectionHeader: true },
+        { label: "Dashboard",  href: "/speakers?section=dashboard",  active: effectiveSection === "dashboard" },
+        { label: "My Tasks",   href: "/speakers?section=tasks",      active: effectiveSection === "tasks" },
+        { label: "Record",     href: "/speakers?section=record",     active: effectiveSection === "record" },
+        { label: "Account",    isSectionHeader: true },
+        { label: "Profile",    href: "/speakers?section=profile",    active: effectiveSection === "profile" },
+        { label: "Guidelines", href: "/speakers?section=guidelines", active: effectiveSection === "guidelines" },
+      ]
+    : [];
 
   const userProfile = {
-    name: speaker.name || user.displayName || user.email?.split("@")[0] || "Speaker",
+    name:
+      (speaker.firstName && speaker.lastName
+        ? `${speaker.firstName} ${speaker.lastName}`
+        : speaker.name) ||
+      user.displayName ||
+      user.email?.split("@")[0] ||
+      "Speaker",
     href: "/speakers?section=profile",
     imageUrl: user.photoURL,
   };
@@ -862,24 +1343,25 @@ function SpeakerPortal({ user }: { user: User }) {
       userProfile={userProfile}
       onSignOut={() => void handleSignOut()}
     >
-      {/* Mobile bottom tab bar */}
-      <BottomTabBar active={section} onNavigate={navigateTo} />
+      {profileComplete && <BottomTabBar active={effectiveSection} onNavigate={navigateTo} />}
 
-      {/* Content — extra bottom padding on mobile for the tab bar */}
-      <div className="mx-auto max-w-2xl px-4 pb-28 pt-6 sm:px-6 lg:max-w-3xl lg:pb-10 lg:pt-8">
-        {section === "dashboard" && (
+      <div className={[
+        "mx-auto max-w-2xl px-4 pt-6 sm:px-6 lg:max-w-3xl lg:pt-8",
+        profileComplete ? "pb-28 lg:pb-10" : "pb-10",
+      ].join(" ")}>
+        {effectiveSection === "dashboard" && (
           <Dashboard speaker={speaker} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
         )}
-        {section === "tasks" && (
+        {effectiveSection === "tasks" && (
           <MyTasks assignments={assignments} onRecord={handleStartRecording} />
         )}
-        {section === "record" && (
+        {effectiveSection === "record" && (
           <Recorder speaker={speaker} assignment={recordingAssignment} onDone={handleRecordingDone} onPickTask={() => navigateTo("tasks")} />
         )}
-        {section === "profile" && (
-          <Profile speaker={speaker} onSaved={setSpeaker} />
+        {effectiveSection === "profile" && (
+          <Profile speaker={speaker} onSaved={setSpeaker} isOnboarding={!profileComplete} />
         )}
-        {section === "guidelines" && <Guidelines />}
+        {effectiveSection === "guidelines" && <Guidelines />}
       </div>
     </DeaimerSiteShell>
   );
@@ -937,7 +1419,6 @@ export function SpeakersShell() {
 
   if (user) return <SpeakerPortal user={user} />;
 
-  // ── Sign-in page ──
   return (
     <DeaimerSiteShell>
       <div className="flex min-h-[80vh] items-center justify-center px-4 py-12">
