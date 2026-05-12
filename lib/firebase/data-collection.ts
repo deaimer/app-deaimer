@@ -587,8 +587,9 @@ export function subscribeToDCAssignmentsBySpeaker(
 
 export async function submitDCSession(input: DCSessionInput): Promise<string> {
   const { auth } = getFirebaseClientServices();
-  const idToken = await auth.currentUser?.getIdToken();
-  if (!idToken) throw new Error("Not authenticated");
+  // Force refresh=true so mobile sessions with stale tokens don't fail
+  const idToken = await auth.currentUser?.getIdToken(true);
+  if (!idToken) throw new Error("Not authenticated — please sign out and sign back in.");
 
   const timestamp = Date.now();
   const ext = input.mimeType.includes("mp4") ? "mp4" : "webm";

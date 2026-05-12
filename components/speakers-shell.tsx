@@ -527,10 +527,23 @@ function Recorder({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       startVisualizer(stream);
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : "audio/mp4";
-      const recorder = new MediaRecorder(stream, { mimeType });
+
+      // Let the browser choose the best format, then read the actual mimeType it selected.
+      // Normalise to just "audio/webm" or "audio/mp4" — stripping codec parameters —
+      // so the presign API whitelist check always passes.
+      let recorder: MediaRecorder;
+      try {
+        const preferredMime = MediaRecorder.isTypeSupported?.("audio/webm")
+          ? "audio/webm"
+          : "audio/mp4";
+        recorder = new MediaRecorder(stream, { mimeType: preferredMime });
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
+      const rawMime = recorder.mimeType || "";
+      const mimeType: string = rawMime.startsWith("audio/mp4") ? "audio/mp4" : "audio/webm";
+
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
@@ -596,9 +609,10 @@ function Recorder({
         region: speaker.region,
       });
       setState("done");
-    } catch {
+    } catch (err) {
       setState("stopped");
-      setError("Could not submit recording. Please try again.");
+      const detail = err instanceof Error ? err.message : String(err);
+      setError(`Upload failed: ${detail}`);
     }
   }
 
