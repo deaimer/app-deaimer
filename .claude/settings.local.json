@@ -9,7 +9,8 @@
       "Bash(npm install *)",
       "Bash(mkdir -p app/api/dc-audio/presign)",
       "Bash(ls app/api/)",
-      "Bash(mkdir -p \"d:\\\\AI\\\\app-deaimer\\\\app\\\\super\\\\data-collection\\\\edit\\\\[id]\")"
+      "Bash(mkdir -p \"d:\\\\AI\\\\app-deaimer\\\\app\\\\super\\\\data-collection\\\\edit\\\\[id]\")",
+      "Bash(npx next *)"
     ],
     "additionalDirectories": [
       "d:\\AI\\app-deaimer\\app\\super\\data-collection\\edit"
