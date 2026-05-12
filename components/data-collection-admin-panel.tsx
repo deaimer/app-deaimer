@@ -268,6 +268,15 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                       >
                         View
                       </button>
+                      {isSuperAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/super/data-collection/edit/${p.id}`)}
+                          className="rounded-lg px-2.5 py-1 text-xs font-medium text-ink hover:bg-slate-100"
+                        >
+                          Edit
+                        </button>
+                      )}
                       {p.status === "active" && (
                         <button
                           type="button"
@@ -313,7 +322,7 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
 function ProjectDetail({
   project,
   activeUser,
-  isSuperAdmin: _isSuperAdmin,
+  isSuperAdmin,
   onBack,
 }: {
   project: DCProject;
@@ -321,6 +330,7 @@ function ProjectDetail({
   isSuperAdmin: boolean;
   onBack: () => void;
 }) {
+  const router = useRouter();
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
   const [showAssign, setShowAssign] = useState(false);
@@ -378,7 +388,18 @@ function ProjectDetail({
             <h2 className="mt-1 text-2xl font-semibold text-ink">{project.name}</h2>
             <p className="mt-1 text-sm leading-6 text-muted">{project.description}</p>
           </div>
-          <StatusBadge status={project.status} />
+          <div className="flex items-center gap-2">
+            <StatusBadge status={project.status} />
+            {isSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => router.push(`/super/data-collection/edit/${project.id}`)}
+                className="rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-muted hover:bg-slate-50 active:scale-95"
+              >
+                Edit Project
+              </button>
+            )}
+          </div>
         </div>
         <div className="mt-5">
           <div className="mb-1.5 flex items-center justify-between text-xs text-muted">

@@ -27,14 +27,21 @@ export interface DCLanguageEntry {
   countries: string[];
 }
 
+export interface DCPrompt {
+  text: string;
+  maxSeconds: number;
+}
+
 export interface DCTaskTemplate {
   id: string;
   title: string;
   guidelinesHtml: string;
   policy: string;
-  prompts: string[];
+  prompts: DCPrompt[];
   minDurationSeconds: number;
   maxDurationSeconds: number;
+  scenario: string;
+  speakersRequired: number;
 }
 
 export interface DCProject {
@@ -50,6 +57,7 @@ export interface DCProject {
   languages: DCLanguageEntry[];
   jobType: string;
   isConversational: boolean;
+  recordingMode: "utterance" | "conversational";
   // Volume & job config
   targetHours: number;
   estimatedJobs: number;
@@ -184,9 +192,20 @@ function mapTask(t: unknown): DCTaskTemplate {
     title: String(d.title ?? ""),
     guidelinesHtml: String(d.guidelinesHtml ?? ""),
     policy: String(d.policy ?? ""),
-    prompts: Array.isArray(d.prompts) ? d.prompts.map(String) : [],
+    prompts: Array.isArray(d.prompts)
+      ? d.prompts.map((p: unknown) =>
+          typeof p === "string"
+            ? { text: p, maxSeconds: 30 }
+            : {
+                text: String((p as { text?: unknown }).text ?? ""),
+                maxSeconds: Number((p as { maxSeconds?: unknown }).maxSeconds ?? 30),
+              },
+        )
+      : [],
     minDurationSeconds: Number(d.minDurationSeconds ?? 30),
     maxDurationSeconds: Number(d.maxDurationSeconds ?? 300),
+    scenario: String(d.scenario ?? ""),
+    speakersRequired: Number(d.speakersRequired ?? 2),
   };
 }
 
@@ -215,6 +234,9 @@ function mapProject(data: DocumentData, id: string): DCProject {
       : [],
     jobType: String(data.jobType ?? ""),
     isConversational: Boolean(data.isConversational ?? false),
+    recordingMode: (data.recordingMode === "conversational" || Boolean(data.isConversational))
+      ? "conversational"
+      : "utterance",
     estimatedJobs: Number(data.estimatedJobs ?? 0),
     maxQuotaHours: Number(data.maxQuotaHours ?? 0),
     maxQuotaMinutes: Number(data.maxQuotaMinutes ?? 0),

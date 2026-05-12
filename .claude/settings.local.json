@@ -8,7 +8,11 @@
       "Bash(findstr /i \"aws\\\\|r2\\\\|s3\\\\|firebase-admin\\\\|cloudflare\")",
       "Bash(npm install *)",
       "Bash(mkdir -p app/api/dc-audio/presign)",
-      "Bash(ls app/api/)"
+      "Bash(ls app/api/)",
+      "Bash(mkdir -p \"d:\\\\AI\\\\app-deaimer\\\\app\\\\super\\\\data-collection\\\\edit\\\\[id]\")"
+    ],
+    "additionalDirectories": [
+      "d:\\AI\\app-deaimer\\app\\super\\data-collection\\edit"
     ]
   }
 }
