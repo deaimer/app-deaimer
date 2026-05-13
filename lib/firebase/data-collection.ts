@@ -596,27 +596,40 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
   const filename = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}.${ext}`;
 
   // 1. Get a short-lived presigned PUT URL from our API route
-  const presignRes = await fetch("/api/dc-audio/presign", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${idToken}`,
-    },
-    body: JSON.stringify({ key: filename, contentType: input.mimeType }),
-  });
-  if (!presignRes.ok) throw new Error("Could not get upload URL");
+  let presignRes: Response;
+  try {
+    presignRes = await fetch("/api/dc-audio/presign", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ key: filename, contentType: input.mimeType }),
+    });
+  } catch (e) {
+    throw new Error(`Presign network error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!presignRes.ok) {
+    const body = await presignRes.text().catch(() => "");
+    throw new Error(`Presign ${presignRes.status}: ${body}`);
+  }
   const { presignedUrl, publicUrl: audioUrl } = await presignRes.json() as {
     presignedUrl: string;
     publicUrl: string;
   };
 
   // 2. Upload the blob directly from the browser to R2 — no server roundtrip
-  const uploadRes = await fetch(presignedUrl, {
-    method: "PUT",
-    body: input.audioBlob,
-    headers: { "Content-Type": input.mimeType },
-  });
-  if (!uploadRes.ok) throw new Error("Audio upload failed");
+  let uploadRes: Response;
+  try {
+    uploadRes = await fetch(presignedUrl, {
+      method: "PUT",
+      body: input.audioBlob,
+      headers: { "Content-Type": input.mimeType },
+    });
+  } catch (e) {
+    throw new Error(`R2 upload network error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!uploadRes.ok) throw new Error(`R2 upload ${uploadRes.status}`);
 
   const docRef = await addDoc(collection(db(), "dcSessions"), {
     projectId: input.projectId,
