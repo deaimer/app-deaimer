@@ -135,6 +135,8 @@ export interface DCAssignment {
   sessionsCount: number;
   deadline: string;
   status: "active" | "completed" | "paused";
+  submittedForReview: boolean;
+  submittedAt?: unknown;
   assignedAt?: unknown;
 }
 
@@ -347,8 +349,17 @@ function mapAssignment(data: DocumentData, id: string): DCAssignment {
     status: (["active", "completed", "paused"].includes(data.status)
       ? data.status
       : "active") as DCAssignment["status"],
+    submittedForReview: Boolean(data.submittedForReview ?? false),
+    submittedAt: data.submittedAt,
     assignedAt: data.assignedAt,
   };
+}
+
+export async function submitAssignmentForReview(assignmentId: string): Promise<void> {
+  await updateDoc(doc(db(), "dcAssignments", assignmentId), {
+    submittedForReview: true,
+    submittedAt: serverTimestamp(),
+  });
 }
 
 function mapSession(data: DocumentData, id: string): DCSession {

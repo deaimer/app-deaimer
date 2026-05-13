@@ -29,6 +29,7 @@ import {
   subscribeToDCProjectById,
   subscribeToDCSessionsBySpeaker,
   subscribeToDCSpeakerByEmail,
+  submitAssignmentForReview,
   submitDCSession,
   updateDCSpeakerProfile,
   type DCAssignment,
@@ -40,9 +41,9 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type SpeakerSection = "dashboard" | "projects" | "profile" | "guidelines";
+type SpeakerSection = "dashboard" | "projects" | "reviews" | "profile" | "guidelines";
 
-const VALID_SECTIONS: SpeakerSection[] = ["dashboard", "projects", "profile", "guidelines"];
+const VALID_SECTIONS: SpeakerSection[] = ["dashboard", "projects", "reviews", "profile", "guidelines"];
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 
@@ -280,9 +281,9 @@ function Dashboard({
   const recentSessions = sessions.slice(0, 5);
 
   const quickCards = [
-    { label: "My Projects", body: "View your assigned recording projects and track your progress towards targets.", section: "projects" as SpeakerSection, featured: true },
-    { label: "Guidelines", body: "Recording tips, environment setup, and quality standards for your sessions.", section: "guidelines" as SpeakerSection, featured: false },
-    { label: "My Profile", body: "Keep your speaker profile up to date — your details are embedded in every recording.", section: "profile" as SpeakerSection, featured: false },
+    { label: "My Projects", body: "Record your assigned projects and track progress prompt by prompt.", section: "projects" as SpeakerSection, featured: true },
+    { label: "Reviews", body: "See QA status for submitted recordings and address any rejections.", section: "reviews" as SpeakerSection, featured: false },
+    { label: "Guidelines", body: "Recording tips, environment setup, and quality standards.", section: "guidelines" as SpeakerSection, featured: false },
   ];
 
   return (
@@ -459,14 +460,17 @@ function ProjectView({
   sessions,
   onBack,
   onSelectTask,
+  onNavigateToReviews,
 }: {
   assignment: DCAssignment;
   project: DCProject;
   sessions: DCSession[];
   onBack: () => void;
   onSelectTask: (task: DCTaskTemplate, taskIndex: number, promptIndex: number) => void;
+  onNavigateToReviews: () => void;
 }) {
   const tasks = project.tasks ?? [];
+  const [submitting, setSubmitting] = useState(false);
 
   function submittedSetForTask(taskId: string): Set<number> {
     return new Set(
@@ -553,7 +557,21 @@ function ProjectView({
             <p className="mt-1.5 text-[11px] text-white/50">{overallProgress}% complete</p>
           </div>
           {/* CTA */}
-          {startContinue ? (
+          {assignment.submittedForReview ? (
+            <div className="mt-5 flex flex-wrap gap-3">
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2">
+                <span className="text-sm text-white">✓</span>
+                <span className="text-sm font-semibold text-white">Submitted for review</span>
+              </div>
+              <button
+                type="button"
+                onClick={onNavigateToReviews}
+                className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+              >
+                View progress →
+              </button>
+            </div>
+          ) : startContinue ? (
             <button
               type="button"
               onClick={() => onSelectTask(tasks[startContinue.taskIndex], startContinue.taskIndex, startContinue.promptIndex)}
@@ -562,9 +580,18 @@ function ProjectView({
               {startContinue.label} →
             </button>
           ) : allTasksDone ? (
-            <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2">
-              <span className="text-sm text-white">✓</span>
-              <span className="text-sm font-semibold text-white">All tasks complete</span>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  setSubmitting(true);
+                  void submitAssignmentForReview(assignment.id).finally(() => setSubmitting(false));
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90 active:scale-[0.97] disabled:opacity-60"
+              >
+                {submitting ? "Submitting…" : "Submit for review →"}
+              </button>
             </div>
           ) : null}
         </div>
@@ -585,7 +612,9 @@ function ProjectView({
             const complete = done >= total && total > 0;
             const inProgress = done > 0 && !complete;
             const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-            const locked = isTaskLocked(idx);
+            const hasRejection = sessions.some((s) => s.taskId === task.id && s.qaStatus === "rejected");
+            // locked by sequencing, OR submitted for review with no rejections to fix
+            const locked = isTaskLocked(idx) || (assignment.submittedForReview && !hasRejection);
 
             return (
               <button
@@ -714,6 +743,8 @@ function TaskView({
   const canGoPrev = promptIdx > 0 || taskIndex > 0;
   const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
   const submittedSession = sessions.find((s) => s.taskId === task.id && s.promptIndex === promptIdx) ?? null;
+  // Lock recording once submitted for review, except for rejected prompts
+  const isRecordingAllowed = !assignment.submittedForReview || submittedSession?.qaStatus === "rejected";
 
   useEffect(() => {
     if (recordState === "recording" && elapsed >= maxSec) {
@@ -948,13 +979,18 @@ function TaskView({
           ) : (
             <p className="text-xs text-emerald-700">Audio processing…</p>
           )}
-          <button
-            type="button"
-            onClick={() => void startRecording()}
-            className="w-full rounded-full border border-emerald-300 bg-white py-2.5 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50 active:scale-[0.98]"
-          >
-            Record new
-          </button>
+          {isRecordingAllowed && (
+            <button
+              type="button"
+              onClick={() => void startRecording()}
+              className="w-full rounded-full border border-emerald-300 bg-white py-2.5 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50 active:scale-[0.98]"
+            >
+              Record new
+            </button>
+          )}
+          {!isRecordingAllowed && (
+            <p className="text-center text-xs text-muted">Locked — submitted for review</p>
+          )}
         </div>
       )}
 
@@ -974,8 +1010,8 @@ function TaskView({
         )
       )}
 
-      {/* Recorder — hidden when reviewing a submitted prompt */}
-      {(recordState !== "idle" || !isSubmitted || blobs.has(promptIdx)) && (
+      {/* Recorder — hidden when reviewing a submitted prompt, or locked */}
+      {(recordState !== "idle" || !isSubmitted || blobs.has(promptIdx)) && isRecordingAllowed && (
       <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
         <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
           {formatDuration(elapsed)}
@@ -1055,6 +1091,179 @@ function TaskView({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Reviews ─────────────────────────────────────────────────────────────────
+
+function Reviews({
+  assignments,
+  sessions,
+  onReRecord,
+}: {
+  assignments: DCAssignment[];
+  sessions: DCSession[];
+  onReRecord: (assignment: DCAssignment, taskId: string, promptIndex: number) => void;
+}) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const submitted = assignments.filter((a) => a.submittedForReview);
+
+  function toggle(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  const qaColor: Record<string, string> = {
+    approved: "bg-emerald-100 text-emerald-700",
+    rejected: "bg-rose-100 text-rose-700",
+    "in-review": "bg-amber-100 text-amber-700",
+    pending: "bg-slate-100 text-slate-500",
+  };
+
+  const qaLabel: Record<string, string> = {
+    approved: "Approved",
+    rejected: "Rejected",
+    "in-review": "In review",
+    pending: "Pending",
+  };
+
+  if (submitted.length === 0) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Reviews</h1>
+        <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-14 text-center">
+          <p className="text-2xl">◎</p>
+          <p className="mt-3 text-sm font-medium text-ink">Nothing submitted yet</p>
+          <p className="mt-1 text-sm text-muted">Complete a project and submit it for review — it will appear here.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <h1 className="text-xl font-semibold text-ink sm:text-2xl">Reviews</h1>
+
+      {submitted.map((assignment) => {
+        const assignmentSessions = sessions.filter((s) => s.assignmentId === assignment.id);
+        const expanded = expandedIds.has(assignment.id);
+
+        // Group sessions by taskId
+        const taskMap = new Map<string, DCSession[]>();
+        assignmentSessions.forEach((s) => {
+          if (!s.taskId) return;
+          if (!taskMap.has(s.taskId)) taskMap.set(s.taskId, []);
+          taskMap.get(s.taskId)!.push(s);
+        });
+
+        const totalSessions = assignmentSessions.length;
+        const approvedCount = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
+        const rejectedCount = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
+        const inReviewCount = assignmentSessions.filter((s) => s.qaStatus === "in-review").length;
+
+        return (
+          <div key={assignment.id} className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+            {/* Assignment header */}
+            <button
+              type="button"
+              onClick={() => toggle(assignment.id)}
+              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+            >
+              <div className="min-w-0">
+                {assignment.projectDialect && (
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{assignment.projectDialect}</p>
+                )}
+                <p className="truncate text-sm font-semibold text-ink">{assignment.projectName}</p>
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  {approvedCount > 0 && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">{approvedCount} approved</span>
+                  )}
+                  {rejectedCount > 0 && (
+                    <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{rejectedCount} rejected</span>
+                  )}
+                  {inReviewCount > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{inReviewCount} in review</span>
+                  )}
+                  {totalSessions === approvedCount && totalSessions > 0 && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">All approved ✓</span>
+                  )}
+                </div>
+              </div>
+              <span className={["shrink-0 text-muted/40 text-sm transition-transform duration-200", expanded ? "rotate-180" : ""].join(" ")}>▾</span>
+            </button>
+
+            {expanded && (
+              <div className="border-t border-slate-100">
+                {taskMap.size === 0 ? (
+                  <p className="px-5 py-4 text-sm text-muted">No sessions found for this project.</p>
+                ) : (
+                  Array.from(taskMap.entries()).map(([taskId, taskSessions]) => {
+                    const sorted = [...taskSessions].sort((a, b) => (a.promptIndex ?? 0) - (b.promptIndex ?? 0));
+                    const taskRejected = sorted.some((s) => s.qaStatus === "rejected");
+
+                    return (
+                      <div key={taskId} className="border-b border-slate-100 last:border-b-0">
+                        <div className="flex items-center justify-between gap-3 bg-slate-50/60 px-5 py-3">
+                          <p className="text-xs font-semibold text-ink">
+                            {sorted[0]?.promptText ? `Task` : "Task"}
+                          </p>
+                          {taskRejected && (
+                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Needs attention</span>
+                          )}
+                        </div>
+
+                        <div className="divide-y divide-slate-50">
+                          {sorted.map((s) => (
+                            <div key={s.id} className="px-5 py-3.5">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-medium text-muted">Prompt {(s.promptIndex ?? 0) + 1}</p>
+                                  {s.promptText && (
+                                    <p className="mt-0.5 text-sm text-ink line-clamp-2">{s.promptText}</p>
+                                  )}
+                                  {s.qaStatus === "rejected" && s.qaNote && (
+                                    <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-widest text-rose-600">Rejection reason</p>
+                                      <p className="mt-0.5 text-sm text-rose-900">{s.qaNote}</p>
+                                    </div>
+                                  )}
+                                  {s.audioUrl && (
+                                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                                    <audio controls src={s.audioUrl} className="mt-2 w-full rounded-xl" />
+                                  )}
+                                </div>
+                                <div className="shrink-0 flex flex-col items-end gap-2">
+                                  <span className={["rounded-full px-2.5 py-1 text-[10px] font-semibold", qaColor[s.qaStatus] ?? qaColor.pending].join(" ")}>
+                                    {qaLabel[s.qaStatus] ?? "Pending"}
+                                  </span>
+                                  {s.qaStatus === "rejected" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onReRecord(assignment, s.taskId!, s.promptIndex!)}
+                                      className="rounded-full border border-rose-200 bg-white px-3 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-50"
+                                    >
+                                      Re-record →
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1572,6 +1781,7 @@ function SpeakerPortal({ user }: { user: User }) {
   const [activeProject, setActiveProject] = useState<DCProject | null>(null);
   const [activeProjectLoading, setActiveProjectLoading] = useState(false);
   const [activeTask, setActiveTask] = useState<{ task: DCTaskTemplate; taskIndex: number; initialPromptIndex: number } | null>(null);
+  const [pendingReRecord, setPendingReRecord] = useState<{ taskId: string; promptIndex: number } | null>(null);
 
   function navigateTo(s: SpeakerSection) {
     // Reset project drill-down when switching sections
@@ -1618,6 +1828,17 @@ function SpeakerPortal({ user }: { user: User }) {
       setActiveProjectLoading(false);
     });
   }, [activeAssignment]);
+
+  // Navigate to a specific task/prompt once the project loads (used by Reviews re-record)
+  useEffect(() => {
+    if (!pendingReRecord || !activeProject) return;
+    const tasks = activeProject.tasks ?? [];
+    const taskIdx = tasks.findIndex((t) => t.id === pendingReRecord.taskId);
+    if (taskIdx >= 0) {
+      setActiveTask({ task: tasks[taskIdx], taskIndex: taskIdx, initialPromptIndex: pendingReRecord.promptIndex });
+      setPendingReRecord(null);
+    }
+  }, [activeProject, pendingReRecord]);
 
   async function handleSignOut() {
     const { auth } = getFirebaseClientServices();
@@ -1673,6 +1894,7 @@ function SpeakerPortal({ user }: { user: User }) {
         { label: "Main",        isSectionHeader: true },
         { label: "Dashboard",   href: "/speakers?section=dashboard",  active: effectiveSection === "dashboard" },
         { label: "My Projects", href: "/speakers?section=projects",   active: effectiveSection === "projects" },
+        { label: "Reviews",     href: "/speakers?section=reviews",    active: effectiveSection === "reviews" },
         { label: "Account",     isSectionHeader: true },
         { label: "Profile",     href: "/speakers?section=profile",    active: effectiveSection === "profile" },
         { label: "Guidelines",  href: "/speakers?section=guidelines", active: effectiveSection === "guidelines" },
@@ -1730,6 +1952,7 @@ function SpeakerPortal({ user }: { user: User }) {
           sessions={sessions.filter((s) => s.assignmentId === activeAssignment.id)}
           onBack={() => { setActiveAssignment(null); setActiveTask(null); }}
           onSelectTask={(task, taskIndex, promptIndex) => setActiveTask({ task, taskIndex, initialPromptIndex: promptIndex })}
+          onNavigateToReviews={() => navigateTo("reviews")}
         />
       );
     }
@@ -1748,6 +1971,18 @@ function SpeakerPortal({ user }: { user: User }) {
             <Dashboard speaker={speaker} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
           )}
           {effectiveSection === "projects" && renderProjects()}
+          {effectiveSection === "reviews" && (
+            <Reviews
+              assignments={assignments}
+              sessions={sessions}
+              onReRecord={(assignment, taskId, promptIndex) => {
+                setPendingReRecord({ taskId, promptIndex });
+                setActiveAssignment(assignment);
+                setActiveTask(null);
+                router.push("/speakers?section=projects");
+              }}
+            />
+          )}
           {effectiveSection === "profile" && (
             <Profile speaker={speaker} onSaved={setSpeaker} isOnboarding={!profileComplete} />
           )}
