@@ -14,7 +14,10 @@
       "Bash(ipconfig /flushdns)",
       "PowerShell(ipconfig /flushdns)",
       "PowerShell(Get-NetAdapter | Where-Object {$_.Status -eq \"Up\"} | Select-Object Name, InterfaceDescription)",
-      "PowerShell(Get-NetIPInterface | Where-Object {$_.ConnectionState -eq \"Connected\"} | Select-Object InterfaceAlias, AddressFamily)"
+      "PowerShell(Get-NetIPInterface | Where-Object {$_.ConnectionState -eq \"Connected\"} | Select-Object InterfaceAlias, AddressFamily)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "d:\\AI\\app-deaimer\\app\\super\\data-collection\\edit"
