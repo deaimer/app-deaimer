@@ -10,7 +10,11 @@
       "Bash(mkdir -p app/api/dc-audio/presign)",
       "Bash(ls app/api/)",
       "Bash(mkdir -p \"d:\\\\AI\\\\app-deaimer\\\\app\\\\super\\\\data-collection\\\\edit\\\\[id]\")",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(ipconfig /flushdns)",
+      "PowerShell(ipconfig /flushdns)",
+      "PowerShell(Get-NetAdapter | Where-Object {$_.Status -eq \"Up\"} | Select-Object Name, InterfaceDescription)",
+      "PowerShell(Get-NetIPInterface | Where-Object {$_.ConnectionState -eq \"Connected\"} | Select-Object InterfaceAlias, AddressFamily)"
     ],
     "additionalDirectories": [
       "d:\\AI\\app-deaimer\\app\\super\\data-collection\\edit"
