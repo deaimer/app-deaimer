@@ -145,6 +145,9 @@ export interface DCSession {
   speakerId: string;
   speakerName: string;
   assignmentId: string;
+  taskId: string | null;
+  promptIndex: number | null;
+  promptText: string | null;
   audioUrl: string;
   filePath: string;
   duration: number;
@@ -172,6 +175,9 @@ export interface DCSessionInput {
   speakerId: string;
   speakerName: string;
   assignmentId: string;
+  taskId?: string | null;
+  promptIndex?: number | null;
+  promptText?: string | null;
   audioBlob: Blob;
   mimeType: string;
   duration: number;
@@ -353,6 +359,9 @@ function mapSession(data: DocumentData, id: string): DCSession {
     speakerId: String(data.speakerId ?? ""),
     speakerName: String(data.speakerName ?? ""),
     assignmentId: String(data.assignmentId ?? ""),
+    taskId: data.taskId ?? null,
+    promptIndex: data.promptIndex != null ? Number(data.promptIndex) : null,
+    promptText: data.promptText ?? null,
     audioUrl: String(data.audioUrl ?? ""),
     filePath: String(data.filePath ?? ""),
     duration: Number(data.duration ?? 0),
@@ -412,6 +421,15 @@ export function subscribeToDCProjects(
 ) {
   const q = query(collection(db(), "dcProjects"), orderBy("createdAt", "desc"));
   return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapProject(d.data(), d.id))), onError);
+}
+
+export function subscribeToDCProjectById(
+  projectId: string,
+  callback: (project: DCProject | null) => void,
+) {
+  return onSnapshot(doc(db(), "dcProjects", projectId), (snap) =>
+    callback(snap.exists() ? mapProject(snap.data(), snap.id) : null),
+  );
 }
 
 export function subscribeToDCProject(id: string, callback: (p: DCProject | null) => void) {
@@ -635,6 +653,9 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
     projectId: input.projectId,
     projectName: input.projectName,
     speakerId: input.speakerId,
+    taskId: input.taskId ?? null,
+    promptIndex: input.promptIndex ?? null,
+    promptText: input.promptText ?? null,
     speakerName: input.speakerName,
     assignmentId: input.assignmentId,
     audioUrl,

@@ -26,20 +26,23 @@ import {
 } from "@/lib/firebase/client";
 import {
   subscribeToDCAssignmentsBySpeaker,
+  subscribeToDCProjectById,
   subscribeToDCSessionsBySpeaker,
   subscribeToDCSpeakerByEmail,
   submitDCSession,
   updateDCSpeakerProfile,
   type DCAssignment,
+  type DCProject,
   type DCSession,
   type DCSpeaker,
+  type DCTaskTemplate,
 } from "@/lib/firebase/data-collection";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type SpeakerSection = "dashboard" | "tasks" | "record" | "profile" | "guidelines";
+type SpeakerSection = "dashboard" | "projects" | "profile" | "guidelines";
 
-const VALID_SECTIONS: SpeakerSection[] = ["dashboard", "tasks", "record", "profile", "guidelines"];
+const VALID_SECTIONS: SpeakerSection[] = ["dashboard", "projects", "profile", "guidelines"];
 
 // ─── Static data ──────────────────────────────────────────────────────────────
 
@@ -277,9 +280,9 @@ function Dashboard({
   const recentSessions = sessions.slice(0, 5);
 
   const quickCards = [
-    { label: "My Tasks", body: "View your assigned recording tasks and track your progress towards targets.", section: "tasks" as SpeakerSection, featured: true },
-    { label: "Record", body: "Start a new recording session for one of your active tasks.", section: "record" as SpeakerSection, featured: false },
+    { label: "My Projects", body: "View your assigned recording projects and track your progress towards targets.", section: "projects" as SpeakerSection, featured: true },
     { label: "Guidelines", body: "Recording tips, environment setup, and quality standards for your sessions.", section: "guidelines" as SpeakerSection, featured: false },
+    { label: "My Profile", body: "Keep your speaker profile up to date — your details are embedded in every recording.", section: "profile" as SpeakerSection, featured: false },
   ];
 
   return (
@@ -295,10 +298,10 @@ function Dashboard({
           <div className="mt-6 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() => onNavigate("tasks")}
+              onClick={() => onNavigate("projects")}
               className="inline-flex items-center justify-center rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90"
             >
-              View tasks
+              View projects
             </button>
             <button
               type="button"
@@ -363,7 +366,7 @@ function Dashboard({
         <h2 className="mb-3 text-sm font-semibold text-ink">Recent Activity</h2>
         {recentSessions.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-10 text-center">
-            <p className="text-sm text-muted">No sessions yet. Head to Tasks to start recording.</p>
+            <p className="text-sm text-muted">No sessions yet. Head to My Projects to start recording.</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
@@ -394,22 +397,16 @@ function Dashboard({
   );
 }
 
-// ─── My Tasks ─────────────────────────────────────────────────────────────────
+// ─── My Projects ──────────────────────────────────────────────────────────────
 
-function MyTasks({
-  assignments,
-  onRecord,
-}: {
-  assignments: DCAssignment[];
-  onRecord: (assignment: DCAssignment) => void;
-}) {
+function MyProjects({ assignments, onSelect }: { assignments: DCAssignment[]; onSelect: (a: DCAssignment) => void }) {
   if (assignments.length === 0) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-ink sm:text-2xl">My Tasks</h1>
+        <h1 className="text-xl font-semibold text-ink sm:text-2xl">My Projects</h1>
         <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-14 text-center">
-          <p className="text-2xl">☑</p>
-          <p className="mt-3 text-sm font-medium text-ink">No tasks yet</p>
+          <p className="text-2xl">◎</p>
+          <p className="mt-3 text-sm font-medium text-ink">No projects yet</p>
           <p className="mt-1 text-sm text-muted">You haven&apos;t been assigned to any projects. Check back soon.</p>
         </div>
       </div>
@@ -418,89 +415,197 @@ function MyTasks({
 
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-semibold text-ink sm:text-2xl">My Tasks</h1>
-      <div className="space-y-3 sm:grid sm:grid-cols-2 sm:gap-4 sm:space-y-0">
-        {assignments.map((a) => {
-          const progress = Math.min(100, (a.hoursCompleted / (a.hoursTarget || 1)) * 100);
-          const remaining = Math.max(0, a.hoursTarget - a.hoursCompleted);
-          const done = remaining <= 0;
-
-          return (
-            <article key={a.id} className="flex flex-col rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex-1">
-                {a.projectDialect && (
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{a.projectDialect}</p>
-                )}
-                <h3 className="mt-1 text-base font-semibold text-ink">{a.projectName}</h3>
-                <p className="mt-1 text-xs leading-5 text-muted line-clamp-2">{a.projectDescription}</p>
-
-                <div className="mt-4">
-                  <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                    <span>{a.hoursCompleted.toFixed(2)}h recorded</span>
-                    <span>{a.hoursTarget}h target</span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted">
-                  <span>{a.sessionsCount} session{a.sessionsCount !== 1 ? "s" : ""}</span>
-                  {a.deadline && <span>Deadline: {a.deadline}</span>}
-                  {!done && <span className="font-medium text-primary">{remaining.toFixed(2)}h remaining</span>}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => onRecord(a)}
-                disabled={a.status !== "active" || done}
-                className={[
-                  "mt-5 w-full rounded-full py-3 text-sm font-semibold transition",
-                  done
-                    ? "cursor-not-allowed bg-slate-100 text-muted"
-                    : "bg-primary text-white hover:bg-primaryStrong active:scale-[0.98]",
-                ].join(" ")}
-              >
-                {done ? "Target reached ✓" : "Start Recording ⏺"}
-              </button>
-            </article>
-          );
-        })}
+      <h1 className="text-xl font-semibold text-ink sm:text-2xl">My Projects</h1>
+      <div className="space-y-3">
+        {assignments.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onSelect(a)}
+            className="group flex w-full items-center justify-between rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4 text-left transition hover:border-primary/30 hover:bg-[#f9fbff]"
+          >
+            <div className="min-w-0">
+              {a.projectDialect && (
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{a.projectDialect}</p>
+              )}
+              <p className="mt-0.5 truncate text-sm font-semibold text-ink">{a.projectName}</p>
+              {a.projectDescription && (
+                <p className="mt-0.5 line-clamp-1 text-xs text-muted">{a.projectDescription}</p>
+              )}
+            </div>
+            <div className="ml-4 flex shrink-0 items-center gap-3">
+              <span className={[
+                "rounded-full border px-2.5 py-0.5 text-[11px] font-medium",
+                a.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : a.status === "completed" ? "border-slate-200 bg-slate-100 text-slate-500"
+                  : "border-amber-200 bg-amber-50 text-amber-800",
+              ].join(" ")}>
+                {a.status}
+              </span>
+              <span className="text-muted/40 transition group-hover:text-primary">→</span>
+            </div>
+          </button>
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── Recorder ─────────────────────────────────────────────────────────────────
+// ─── Project View ──────────────────────────────────────────────────────────────
 
-type RecordState = "idle" | "recording" | "stopped" | "submitting" | "done";
+function ProjectView({
+  assignment,
+  project,
+  sessions,
+  onBack,
+  onSelectTask,
+}: {
+  assignment: DCAssignment;
+  project: DCProject;
+  sessions: DCSession[];
+  onBack: () => void;
+  onSelectTask: (task: DCTaskTemplate, taskIndex: number) => void;
+}) {
+  const tasks = project.tasks ?? [];
 
-function Recorder({
+  function donePromptsForTask(taskId: string, totalPrompts: number): number {
+    return new Set(
+      sessions
+        .filter((s) => s.taskId === taskId && s.promptIndex != null)
+        .map((s) => s.promptIndex!)
+    ).size;
+  }
+
+  const allTasksDone = tasks.length > 0 && tasks.every((t) => donePromptsForTask(t.id, t.prompts.length) >= t.prompts.length);
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink">
+          <span>←</span> My Projects
+        </button>
+        <h1 className="text-xl font-semibold text-ink sm:text-2xl">{assignment.projectName}</h1>
+        {assignment.projectDescription && (
+          <p className="mt-1 text-sm text-muted">{assignment.projectDescription}</p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted">
+          <span>{tasks.length} task{tasks.length !== 1 ? "s" : ""}</span>
+          {assignment.deadline && <span>· Deadline: {assignment.deadline}</span>}
+        </div>
+      </div>
+
+      {allTasksDone && (
+        <div className="rounded-[1.25rem] border border-emerald-200 bg-emerald-50 px-5 py-4 text-center">
+          <p className="text-sm font-semibold text-emerald-900">All tasks complete</p>
+          <p className="mt-0.5 text-xs text-emerald-700">You have completed every prompt in this project.</p>
+        </div>
+      )}
+
+      {/* Task list */}
+      {tasks.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-10 text-center">
+          <p className="text-sm text-muted">No tasks have been added to this project yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-ink">Tasks</h2>
+          {tasks.map((task, idx) => {
+            const done = donePromptsForTask(task.id, task.prompts.length);
+            const total = task.prompts.length;
+            const complete = done >= total && total > 0;
+            const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+
+            return (
+              <button
+                key={task.id}
+                type="button"
+                onClick={() => onSelectTask(task, idx)}
+                className="group flex w-full items-center justify-between rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4 text-left transition hover:border-primary/30 hover:bg-[#f9fbff]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {complete && <span className="text-emerald-500">✓</span>}
+                    <p className="truncate text-sm font-semibold text-ink">{task.title}</p>
+                  </div>
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className="h-1.5 w-32 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+                    </div>
+                    <span className="text-xs text-muted">{done}/{total} prompts</span>
+                  </div>
+                </div>
+                <span className="ml-4 shrink-0 text-muted/40 transition group-hover:text-primary">→</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Task View (prompt-by-prompt recorder) ────────────────────────────────────
+
+type PromptRecordState = "idle" | "recording" | "stopped" | "saving";
+
+interface PromptBlob { blob: Blob; mimeType: string; duration: number; url: string }
+
+function TaskView({
   speaker,
   assignment,
-  onDone,
-  onPickTask,
+  project,
+  task,
+  sessions,
+  onBack,
 }: {
   speaker: DCSpeaker;
-  assignment: DCAssignment | null;
-  onDone: () => void;
-  onPickTask: () => void;
+  assignment: DCAssignment;
+  project: DCProject;
+  task: DCTaskTemplate;
+  sessions: DCSession[];
+  onBack: () => void;
 }) {
-  const [state, setState] = useState<RecordState>("idle");
+  const prompts = task.prompts ?? [];
+
+  // Which prompts already have uploaded sessions
+  const submittedSet = new Set(
+    sessions
+      .filter((s) => s.taskId === task.id && s.promptIndex != null)
+      .map((s) => s.promptIndex!)
+  );
+
+  const firstUndone = prompts.findIndex((_, i) => !submittedSet.has(i));
+  const [promptIdx, setPromptIdx] = useState(firstUndone >= 0 ? firstUndone : 0);
+  const [blobs, setBlobs] = useState<Map<number, PromptBlob>>(new Map());
+  const [recordState, setRecordState] = useState<PromptRecordState>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [audioMimeType, setAudioMimeType] = useState("audio/webm");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [error, setError] = useState("");
   const [levelBars, setLevelBars] = useState<number[]>(Array(24).fill(0));
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitProgress, setSubmitProgress] = useState(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  const currentPrompt = prompts[promptIdx];
+  const maxSec = currentPrompt?.maxSeconds ?? 30;
+  const currentBlob = blobs.get(promptIdx) ?? null;
+  const isSubmitted = submittedSet.has(promptIdx);
+
+  // Auto-stop at maxSeconds
+  useEffect(() => {
+    if (recordState === "recording" && elapsed >= maxSec) {
+      stopRecording();
+    }
+  }, [elapsed, maxSec, recordState]);
+
+  // All prompts are either submitted or have a local blob
+  const allDone = prompts.every((_, i) => submittedSet.has(i) || blobs.has(i));
+  const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
 
   function stopVisualizer() {
     if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
@@ -509,11 +614,9 @@ function Recorder({
 
   function startVisualizer(stream: MediaStream) {
     const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 64;
-    source.connect(analyser);
-    analyserRef.current = analyser;
+    ctx.createMediaStreamSource(stream).connect(analyser);
     function tick() {
       const data = new Uint8Array(analyser.frequencyBinCount);
       analyser.getByteFrequencyData(data);
@@ -531,48 +634,33 @@ function Recorder({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       startVisualizer(stream);
-
-      // Let the browser choose the best format, then read the actual mimeType it selected.
-      // Normalise to just "audio/webm" or "audio/mp4" — stripping codec parameters —
-      // so the presign API whitelist check always passes.
       let recorder: MediaRecorder;
       try {
-        const preferredMime = MediaRecorder.isTypeSupported?.("audio/webm")
-          ? "audio/webm"
-          : "audio/mp4";
-        recorder = new MediaRecorder(stream, { mimeType: preferredMime });
-      } catch {
-        recorder = new MediaRecorder(stream);
-      }
-
+        const preferred = MediaRecorder.isTypeSupported?.("audio/webm") ? "audio/webm" : "audio/mp4";
+        recorder = new MediaRecorder(stream, { mimeType: preferred });
+      } catch { recorder = new MediaRecorder(stream); }
       const rawMime = recorder.mimeType || "";
       const mimeType: string = rawMime.startsWith("audio/mp4") ? "audio/mp4" : "audio/webm";
-
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
-        setAudioBlob(blob);
-        setAudioMimeType(mimeType);
-        setAudioUrl(URL.createObjectURL(blob));
-        setState("stopped");
+        const url = URL.createObjectURL(blob);
+        setBlobs((prev) => new Map(prev).set(promptIdx, { blob, mimeType, duration: elapsed, url }));
+        setRecordState("stopped");
         stopVisualizer();
         stream.getTracks().forEach((t) => t.stop());
       };
       recorder.start(100);
-      setState("recording");
+      setRecordState("recording");
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     } catch (err) {
       const name = (err as { name?: string }).name;
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("BLOCKED");
-      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-        setError("No microphone found. Please connect a microphone and try again.");
-      } else {
-        setError("Could not access microphone. Please try again.");
-      }
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") setError("BLOCKED");
+      else if (name === "NotFoundError" || name === "DevicesNotFoundError") setError("No microphone found.");
+      else setError("Could not access microphone. Please try again.");
     }
   }
 
@@ -584,39 +672,59 @@ function Recorder({
   }
 
   function reRecord() {
-    setAudioBlob(null);
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
-    setAudioUrl(null);
+    const prev = blobs.get(promptIdx);
+    if (prev?.url) URL.revokeObjectURL(prev.url);
+    setBlobs((prev) => { const m = new Map(prev); m.delete(promptIdx); return m; });
     setElapsed(0);
-    setState("idle");
+    setRecordState("idle");
   }
 
-  async function handleSubmit() {
-    if (!audioBlob || !assignment) return;
-    setState("submitting");
+  function goToPrompt(idx: number) {
+    if (recordState === "recording") return; // don't navigate while recording
+    setRecordState(blobs.has(idx) || submittedSet.has(idx) ? "stopped" : "idle");
+    setElapsed(0);
     setError("");
+    setPromptIdx(idx);
+  }
+
+  async function handleSubmitTask() {
+    if (!allDone) return;
+    setSubmitting(true);
+    setError("");
+    let uploaded = 0;
     try {
-      await submitDCSession({
-        projectId: assignment.projectId,
-        projectName: assignment.projectName,
-        speakerId: speaker.email,
-        speakerName: speaker.name,
-        assignmentId: assignment.id,
-        audioBlob,
-        mimeType: audioMimeType,
-        duration: elapsed,
-        sampleRate: 44100,
-        bitDepth: 16,
-        gender: speaker.gender,
-        age: speaker.age,
-        dialect: speaker.languages[0] || speaker.dialect,
-        region: speaker.region,
-      });
-      setState("done");
+      for (const [idx, entry] of Array.from(blobs.entries())) {
+        if (submittedSet.has(idx)) continue; // already uploaded
+        await submitDCSession({
+          projectId: assignment.projectId,
+          projectName: assignment.projectName,
+          speakerId: speaker.email,
+          speakerName: speaker.name,
+          assignmentId: assignment.id,
+          taskId: task.id,
+          promptIndex: idx,
+          promptText: prompts[idx]?.text ?? "",
+          audioBlob: entry.blob,
+          mimeType: entry.mimeType,
+          duration: entry.duration,
+          sampleRate: 44100,
+          bitDepth: 16,
+          gender: speaker.gender,
+          age: speaker.age,
+          dialect: speaker.languages[0] || speaker.dialect,
+          region: speaker.region,
+        });
+        uploaded++;
+        setSubmitProgress(Math.round((uploaded / newBlobCount) * 100));
+      }
+      // Revoke blob URLs
+      blobs.forEach((b) => URL.revokeObjectURL(b.url));
+      setBlobs(new Map());
+      onBack(); // go back to project view — sessions subscription will show updated state
     } catch (err) {
-      setState("stopped");
       const detail = err instanceof Error ? err.message : String(err);
       setError(`Upload failed: ${detail}`);
+      setSubmitting(false);
     }
   }
 
@@ -625,63 +733,80 @@ function Recorder({
       if (timerRef.current) clearInterval(timerRef.current);
       stopVisualizer();
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      blobs.forEach((b) => URL.revokeObjectURL(b.url));
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!assignment) {
+  if (!currentPrompt) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Record</h1>
-        <div className="rounded-[1.5rem] border border-dashed border-slate-200 bg-white px-6 py-14 text-center">
-          <p className="text-3xl">⏺</p>
-          <p className="mt-3 text-sm font-medium text-ink">No task selected</p>
-          <p className="mt-1 text-sm text-muted">Pick a task first to start recording.</p>
-          <button type="button" onClick={onPickTask} className="mt-5 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
-            Go to Tasks
-          </button>
-        </div>
+        <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-ink">← Back</button>
+        <p className="text-sm text-muted">This task has no prompts.</p>
       </div>
     );
   }
 
-  if (state === "done") {
-    return (
-      <div className="space-y-4">
-        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Record</h1>
-        <div className="rounded-[1.5rem] border border-emerald-200 bg-emerald-50 p-8 text-center">
-          <p className="text-4xl">✓</p>
-          <h2 className="mt-3 text-lg font-semibold text-emerald-900">Recording submitted</h2>
-          <p className="mt-1 text-sm text-emerald-800">Your recording for <strong>{assignment.projectName}</strong> has been saved.</p>
-          <button type="button" onClick={onDone} className="mt-5 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
-            Back to tasks
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const timerColor = elapsed >= maxSec * 0.9 ? "text-rose-500" : elapsed >= maxSec * 0.7 ? "text-amber-500" : "text-ink";
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Record</h1>
-        <span className="rounded-full border border-slate-200 bg-panelStrong px-3 py-0.5 text-xs text-muted">{assignment.projectName}</span>
+    <div className="space-y-5">
+      {/* Header */}
+      <div>
+        <button type="button" onClick={onBack} className="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink">
+          <span>←</span> {assignment.projectName}
+        </button>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-xl font-semibold text-ink">{task.title}</h1>
+          <span className="shrink-0 rounded-full border border-slate-200 bg-panelStrong px-3 py-0.5 text-xs text-muted">
+            {promptIdx + 1} / {prompts.length}
+          </span>
+        </div>
       </div>
 
-      {assignment.promptText && (
-        <div className="rounded-[1.25rem] border border-blue-100 bg-blue-50 p-4">
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">Prompt</p>
-          <p className="text-sm leading-7 text-ink">{assignment.promptText}</p>
+      {/* Prompt stepper */}
+      <div className="flex gap-1.5 flex-wrap">
+        {prompts.map((_, i) => {
+          const done = submittedSet.has(i) || blobs.has(i);
+          const active = i === promptIdx;
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => goToPrompt(i)}
+              className={[
+                "h-2 flex-1 min-w-[20px] rounded-full transition-all",
+                active ? "bg-primary" : done ? "bg-emerald-400" : "bg-slate-200",
+              ].join(" ")}
+              aria-label={`Prompt ${i + 1}`}
+            />
+          );
+        })}
+      </div>
+
+      {/* Prompt text */}
+      <div className="rounded-[1.25rem] border border-blue-100 bg-blue-50 p-4">
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">Prompt {promptIdx + 1}</p>
+        <p className="text-sm leading-7 text-ink">{currentPrompt.text}</p>
+        <p className="mt-2 text-[11px] text-muted">Max {maxSec}s</p>
+      </div>
+
+      {/* Already submitted badge */}
+      {isSubmitted && !blobs.has(promptIdx) && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <span className="text-emerald-500">✓</span>
+          <p className="text-sm text-emerald-800">This prompt was already submitted. You can re-record it if needed.</p>
         </div>
       )}
 
+      {/* Error */}
       {error && (
         error === "BLOCKED" ? (
           <div className="rounded-[1.25rem] border border-rose-200 bg-rose-50 p-4">
             <p className="font-semibold text-rose-900">Microphone access blocked</p>
-            <p className="mt-1 text-sm text-rose-800">To fix this:</p>
             <ol className="mt-2 list-inside list-decimal space-y-1 text-sm text-rose-800">
-              <li>Tap the <strong>lock icon</strong> in your browser&apos;s address bar</li>
-              <li>Set <strong>Microphone</strong> to <strong>Allow</strong></li>
+              <li>Tap the lock icon in your browser&apos;s address bar</li>
+              <li>Set Microphone to Allow</li>
               <li>Refresh and try again</li>
             </ol>
           </div>
@@ -690,25 +815,22 @@ function Recorder({
         )
       )}
 
+      {/* Recorder */}
       <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
-        <p className="font-mono text-5xl font-light tracking-tight text-ink sm:text-6xl">
+        <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
           {formatDuration(elapsed)}
         </p>
         <div className="flex h-10 items-end gap-[2px]" aria-hidden="true">
           {levelBars.map((h, i) => (
-            <div
-              key={i}
-              className={["w-[3px] rounded-full transition-all duration-75", state === "recording" ? "bg-primary" : "bg-slate-200"].join(" ")}
-              style={{ height: `${Math.max(4, h)}%` }}
-            />
+            <div key={i} className={["w-[3px] rounded-full transition-all duration-75", recordState === "recording" ? "bg-primary" : "bg-slate-200"].join(" ")} style={{ height: `${Math.max(4, h)}%` }} />
           ))}
         </div>
-        {state === "idle" && (
+        {recordState === "idle" && (
           <button type="button" onClick={() => void startRecording()} className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-white shadow-[0_4px_24px_rgba(43,133,240,0.4)] hover:bg-primaryStrong active:scale-95">
             <span className="text-2xl">⏺</span>
           </button>
         )}
-        {state === "recording" && (
+        {recordState === "recording" && (
           <>
             <button type="button" onClick={stopRecording} className="flex h-20 w-20 items-center justify-center rounded-full bg-rose-600 text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 active:scale-95">
               <span className="text-2xl">⏹</span>
@@ -718,22 +840,48 @@ function Recorder({
         )}
       </div>
 
-      {state === "stopped" && audioUrl && (
-        <div className="space-y-4 rounded-[1.25rem] border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-ink">Playback</p>
+      {/* Playback + nav */}
+      {recordState === "stopped" && currentBlob && (
+        <div className="space-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-4">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio controls src={audioUrl} className="w-full rounded-xl" />
-          <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={reRecord} className="rounded-full border border-slate-200 py-3 text-sm font-semibold text-muted hover:bg-slate-50 active:scale-[0.98]">Re-record</button>
-            <button type="button" onClick={() => void handleSubmit()} className="rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong active:scale-[0.98]">Submit ✓</button>
+          <audio controls src={currentBlob.url} className="w-full rounded-xl" />
+          <div className="flex gap-3">
+            <button type="button" onClick={reRecord} className="flex-1 rounded-full border border-slate-200 py-2.5 text-sm font-semibold text-muted hover:bg-slate-50">
+              Re-record
+            </button>
+            {promptIdx < prompts.length - 1 ? (
+              <button type="button" onClick={() => goToPrompt(promptIdx + 1)} className="flex-1 rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
+                Next prompt →
+              </button>
+            ) : (
+              <button type="button" onClick={() => goToPrompt(0)} className="flex-1 rounded-full border border-primary py-2.5 text-sm font-semibold text-primary hover:bg-primary/5">
+                Review all
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {state === "submitting" && (
-        <div className="flex items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-6">
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
-          <p className="text-sm text-muted">Uploading your recording…</p>
+      {/* Submit task */}
+      {allDone && newBlobCount > 0 && !submitting && (
+        <button
+          type="button"
+          onClick={() => void handleSubmitTask()}
+          className="w-full rounded-full bg-emerald-600 py-3.5 text-sm font-semibold text-white hover:bg-emerald-700 active:scale-[0.98]"
+        >
+          Submit task ({newBlobCount} recording{newBlobCount !== 1 ? "s" : ""}) ✓
+        </button>
+      )}
+
+      {submitting && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-5">
+          <div className="flex items-center gap-3">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+            <p className="text-sm text-muted">Uploading… {submitProgress}%</p>
+          </div>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${submitProgress}%` }} />
+          </div>
         </div>
       )}
     </div>
@@ -1247,9 +1395,18 @@ function SpeakerPortal({ user }: { user: User }) {
   const [speakerLoading, setSpeakerLoading] = useState(true);
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
-  const [recordingAssignment, setRecordingAssignment] = useState<DCAssignment | null>(null);
+
+  // Projects navigation state
+  const [activeAssignment, setActiveAssignment] = useState<DCAssignment | null>(null);
+  const [activeProject, setActiveProject] = useState<DCProject | null>(null);
+  const [activeProjectLoading, setActiveProjectLoading] = useState(false);
+  const [activeTask, setActiveTask] = useState<{ task: DCTaskTemplate; taskIndex: number } | null>(null);
 
   function navigateTo(s: SpeakerSection) {
+    // Reset project drill-down when switching sections
+    setActiveAssignment(null);
+    setActiveProject(null);
+    setActiveTask(null);
     router.push(`/speakers?section=${s}`);
   }
 
@@ -1278,19 +1435,22 @@ function SpeakerPortal({ user }: { user: User }) {
     return () => { u1(); u2(); };
   }, [user.email]);
 
+  // Subscribe to project detail when an assignment is selected
+  useEffect(() => {
+    if (!activeAssignment) {
+      setActiveProject(null);
+      return;
+    }
+    setActiveProjectLoading(true);
+    return subscribeToDCProjectById(activeAssignment.projectId, (p) => {
+      setActiveProject(p);
+      setActiveProjectLoading(false);
+    });
+  }, [activeAssignment]);
+
   async function handleSignOut() {
     const { auth } = getFirebaseClientServices();
     await signOut(auth);
-  }
-
-  function handleStartRecording(assignment: DCAssignment) {
-    setRecordingAssignment(assignment);
-    navigateTo("record");
-  }
-
-  function handleRecordingDone() {
-    setRecordingAssignment(null);
-    navigateTo("tasks");
   }
 
   if (speakerLoading) {
@@ -1339,13 +1499,12 @@ function SpeakerPortal({ user }: { user: User }) {
 
   const speakerMenuItems: PlatformSideMenuItem[] = profileComplete
     ? [
-        { label: "Main",       isSectionHeader: true },
-        { label: "Dashboard",  href: "/speakers?section=dashboard",  active: effectiveSection === "dashboard" },
-        { label: "My Tasks",   href: "/speakers?section=tasks",      active: effectiveSection === "tasks" },
-        { label: "Record",     href: "/speakers?section=record",     active: effectiveSection === "record" },
-        { label: "Account",    isSectionHeader: true },
-        { label: "Profile",    href: "/speakers?section=profile",    active: effectiveSection === "profile" },
-        { label: "Guidelines", href: "/speakers?section=guidelines", active: effectiveSection === "guidelines" },
+        { label: "Main",        isSectionHeader: true },
+        { label: "Dashboard",   href: "/speakers?section=dashboard",  active: effectiveSection === "dashboard" },
+        { label: "My Projects", href: "/speakers?section=projects",   active: effectiveSection === "projects" },
+        { label: "Account",     isSectionHeader: true },
+        { label: "Profile",     href: "/speakers?section=profile",    active: effectiveSection === "profile" },
+        { label: "Guidelines",  href: "/speakers?section=guidelines", active: effectiveSection === "guidelines" },
       ]
     : [];
 
@@ -1361,6 +1520,40 @@ function SpeakerPortal({ user }: { user: User }) {
     imageUrl: user.photoURL,
   };
 
+  function renderProjects() {
+    if (activeTask && activeAssignment && activeProject) {
+      return (
+        <TaskView
+          speaker={speaker!}
+          assignment={activeAssignment}
+          project={activeProject}
+          task={activeTask.task}
+          sessions={sessions.filter((s) => s.assignmentId === activeAssignment.id)}
+          onBack={() => setActiveTask(null)}
+        />
+      );
+    }
+    if (activeAssignment) {
+      if (activeProjectLoading || !activeProject) {
+        return (
+          <div className="flex min-h-[40vh] items-center justify-center">
+            <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+          </div>
+        );
+      }
+      return (
+        <ProjectView
+          assignment={activeAssignment}
+          project={activeProject}
+          sessions={sessions.filter((s) => s.assignmentId === activeAssignment.id)}
+          onBack={() => { setActiveAssignment(null); setActiveTask(null); }}
+          onSelectTask={(task, taskIndex) => setActiveTask({ task, taskIndex })}
+        />
+      );
+    }
+    return <MyProjects assignments={assignments} onSelect={(a) => setActiveAssignment(a)} />;
+  }
+
   return (
     <DeaimerSiteShell
       platformSideMenuItems={speakerMenuItems}
@@ -1372,12 +1565,7 @@ function SpeakerPortal({ user }: { user: User }) {
           {effectiveSection === "dashboard" && (
             <Dashboard speaker={speaker} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
           )}
-          {effectiveSection === "tasks" && (
-            <MyTasks assignments={assignments} onRecord={handleStartRecording} />
-          )}
-          {effectiveSection === "record" && (
-            <Recorder speaker={speaker} assignment={recordingAssignment} onDone={handleRecordingDone} onPickTask={() => navigateTo("tasks")} />
-          )}
+          {effectiveSection === "projects" && renderProjects()}
           {effectiveSection === "profile" && (
             <Profile speaker={speaker} onSaved={setSpeaker} isOnboarding={!profileComplete} />
           )}
