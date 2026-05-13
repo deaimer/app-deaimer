@@ -468,7 +468,7 @@ function ProjectView({
 }) {
   const tasks = project.tasks ?? [];
 
-  function donePromptsForTask(taskId: string, totalPrompts: number): number {
+  function donePromptsForTask(taskId: string): number {
     return new Set(
       sessions
         .filter((s) => s.taskId === taskId && s.promptIndex != null)
@@ -476,23 +476,55 @@ function ProjectView({
     ).size;
   }
 
-  const allTasksDone = tasks.length > 0 && tasks.every((t) => donePromptsForTask(t.id, t.prompts.length) >= t.prompts.length);
+  const totalPrompts = tasks.reduce((sum, t) => sum + t.prompts.length, 0);
+  const donePrompts = tasks.reduce((sum, t) => sum + donePromptsForTask(t.id), 0);
+  const overallProgress = totalPrompts > 0 ? Math.round((donePrompts / totalPrompts) * 100) : 0;
+  const allTasksDone = tasks.length > 0 && tasks.every((t) => donePromptsForTask(t.id) >= t.prompts.length);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink">
-          <span>←</span> My Projects
-        </button>
-        <h1 className="text-xl font-semibold text-ink sm:text-2xl">{assignment.projectName}</h1>
-        {assignment.projectDescription && (
-          <p className="mt-1 text-sm text-muted">{assignment.projectDescription}</p>
-        )}
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted">
-          <span>{tasks.length} task{tasks.length !== 1 ? "s" : ""}</span>
-          {assignment.deadline && <span>· Deadline: {assignment.deadline}</span>}
+    <div className="space-y-5">
+      {/* Back */}
+      <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink">
+        <span>←</span> My Projects
+      </button>
+
+      {/* Hero card */}
+      <div className="relative overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-primary to-primaryStrong px-6 py-7 sm:px-8 sm:py-9">
+        <div className="relative z-10">
+          {assignment.projectDialect && (
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60">{assignment.projectDialect}</p>
+          )}
+          <h1 className="mt-1 text-2xl font-semibold text-white sm:text-3xl">{assignment.projectName}</h1>
+          {assignment.projectDescription && (
+            <p className="mt-1.5 text-sm leading-6 text-white/70">{assignment.projectDescription}</p>
+          )}
+          {/* Stats */}
+          <div className="mt-5 flex flex-wrap gap-x-6 gap-y-3">
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-widest text-white/50">Tasks</p>
+              <p className="mt-0.5 text-xl font-semibold text-white">{tasks.length}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-widest text-white/50">Prompts done</p>
+              <p className="mt-0.5 text-xl font-semibold text-white">{donePrompts}<span className="text-sm font-normal text-white/60">/{totalPrompts}</span></p>
+            </div>
+            {assignment.deadline && (
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-widest text-white/50">Deadline</p>
+                <p className="mt-0.5 text-xl font-semibold text-white">{assignment.deadline}</p>
+              </div>
+            )}
+          </div>
+          {/* Overall progress */}
+          <div className="mt-5">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+              <div className="h-full rounded-full bg-white transition-all duration-500" style={{ width: `${overallProgress}%` }} />
+            </div>
+            <p className="mt-1.5 text-[11px] text-white/50">{overallProgress}% complete</p>
+          </div>
         </div>
+        <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-white/10" />
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-6 right-20 h-28 w-28 rounded-full bg-white/5" />
       </div>
 
       {allTasksDone && (
@@ -509,11 +541,11 @@ function ProjectView({
         </div>
       ) : (
         <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-ink">Tasks</h2>
           {tasks.map((task, idx) => {
-            const done = donePromptsForTask(task.id, task.prompts.length);
+            const done = donePromptsForTask(task.id);
             const total = task.prompts.length;
             const complete = done >= total && total > 0;
+            const inProgress = done > 0 && !complete;
             const progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
             return (
@@ -521,21 +553,50 @@ function ProjectView({
                 key={task.id}
                 type="button"
                 onClick={() => onSelectTask(task, idx)}
-                className="group flex w-full items-center justify-between rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4 text-left transition hover:border-primary/30 hover:bg-[#f9fbff]"
+                className="group w-full rounded-[1.25rem] border border-slate-200 bg-white p-5 text-left transition hover:border-primary/30 hover:bg-[#f9fbff]"
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    {complete && <span className="text-emerald-500">✓</span>}
-                    <p className="truncate text-sm font-semibold text-ink">{task.title}</p>
+                <div className="flex items-start gap-4">
+                  {/* Number / check circle */}
+                  <div className={[
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold transition",
+                    complete
+                      ? "bg-emerald-100 text-emerald-600"
+                      : inProgress
+                        ? "bg-primary/10 text-primary"
+                        : "bg-slate-100 text-slate-400",
+                  ].join(" ")}>
+                    {complete ? "✓" : String(idx + 1).padStart(2, "0")}
                   </div>
-                  <div className="mt-2 flex items-center gap-3">
-                    <div className="h-1.5 w-32 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-ink">{task.title}</p>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className={[
+                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          complete
+                            ? "bg-emerald-100 text-emerald-700"
+                            : inProgress
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-slate-100 text-slate-500",
+                        ].join(" ")}>
+                          {complete ? "Done" : inProgress ? "In progress" : "Not started"}
+                        </span>
+                        <span className="text-muted/40 transition group-hover:text-primary">→</span>
+                      </div>
                     </div>
-                    <span className="text-xs text-muted">{done}/{total} prompts</span>
+
+                    <div className="mt-3">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={["h-full rounded-full transition-all duration-500", complete ? "bg-emerald-400" : "bg-primary"].join(" ")}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-muted">{done} of {total} prompt{total !== 1 ? "s" : ""} recorded</p>
+                    </div>
                   </div>
                 </div>
-                <span className="ml-4 shrink-0 text-muted/40 transition group-hover:text-primary">→</span>
               </button>
             );
           })}
@@ -845,20 +906,9 @@ function TaskView({
         <div className="space-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-4">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio controls src={currentBlob.url} className="w-full rounded-xl" />
-          <div className="flex gap-3">
-            <button type="button" onClick={reRecord} className="flex-1 rounded-full border border-slate-200 py-2.5 text-sm font-semibold text-muted hover:bg-slate-50">
-              Re-record
-            </button>
-            {promptIdx < prompts.length - 1 ? (
-              <button type="button" onClick={() => goToPrompt(promptIdx + 1)} className="flex-1 rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
-                Next prompt →
-              </button>
-            ) : (
-              <button type="button" onClick={() => goToPrompt(0)} className="flex-1 rounded-full border border-primary py-2.5 text-sm font-semibold text-primary hover:bg-primary/5">
-                Review all
-              </button>
-            )}
-          </div>
+          <button type="button" onClick={reRecord} className="w-full rounded-full border border-slate-200 py-2.5 text-sm font-semibold text-muted hover:bg-slate-50">
+            Re-record
+          </button>
         </div>
       )}
 
