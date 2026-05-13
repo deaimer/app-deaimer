@@ -464,22 +464,52 @@ function ProjectView({
   project: DCProject;
   sessions: DCSession[];
   onBack: () => void;
-  onSelectTask: (task: DCTaskTemplate, taskIndex: number) => void;
+  onSelectTask: (task: DCTaskTemplate, taskIndex: number, promptIndex: number) => void;
 }) {
   const tasks = project.tasks ?? [];
 
-  function donePromptsForTask(taskId: string): number {
+  function submittedSetForTask(taskId: string): Set<number> {
     return new Set(
       sessions
         .filter((s) => s.taskId === taskId && s.promptIndex != null)
         .map((s) => s.promptIndex!)
-    ).size;
+    );
+  }
+
+  function donePromptsForTask(taskId: string, total: number): number {
+    return Math.min(submittedSetForTask(taskId).size, total);
   }
 
   const totalPrompts = tasks.reduce((sum, t) => sum + t.prompts.length, 0);
-  const donePrompts = tasks.reduce((sum, t) => sum + donePromptsForTask(t.id), 0);
+  const donePrompts = tasks.reduce((sum, t) => sum + donePromptsForTask(t.id, t.prompts.length), 0);
   const overallProgress = totalPrompts > 0 ? Math.round((donePrompts / totalPrompts) * 100) : 0;
-  const allTasksDone = tasks.length > 0 && tasks.every((t) => donePromptsForTask(t.id) >= t.prompts.length);
+  const allTasksDone = tasks.length > 0 && tasks.every((t) => donePromptsForTask(t.id, t.prompts.length) >= t.prompts.length);
+
+  function isTaskLocked(taskIdx: number): boolean {
+    for (let i = 0; i < taskIdx; i++) {
+      if (donePromptsForTask(tasks[i].id, tasks[i].prompts.length) < tasks[i].prompts.length) return true;
+    }
+    return false;
+  }
+
+  function getStartContinue(): { taskIndex: number; promptIndex: number; label: "Start" | "Continue" } | null {
+    if (allTasksDone) return null;
+    for (let ti = 0; ti < tasks.length; ti++) {
+      const t = tasks[ti];
+      const submitted = submittedSetForTask(t.id);
+      if (submitted.size < t.prompts.length) {
+        const firstIncomplete = t.prompts.findIndex((_, i) => !submitted.has(i));
+        return {
+          taskIndex: ti,
+          promptIndex: firstIncomplete >= 0 ? firstIncomplete : 0,
+          label: donePrompts === 0 ? "Start" : "Continue",
+        };
+      }
+    }
+    return null;
+  }
+
+  const startContinue = getStartContinue();
 
   return (
     <div className="space-y-5">
@@ -522,17 +552,25 @@ function ProjectView({
             </div>
             <p className="mt-1.5 text-[11px] text-white/50">{overallProgress}% complete</p>
           </div>
+          {/* CTA */}
+          {startContinue ? (
+            <button
+              type="button"
+              onClick={() => onSelectTask(tasks[startContinue.taskIndex], startContinue.taskIndex, startContinue.promptIndex)}
+              className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90 active:scale-[0.97]"
+            >
+              {startContinue.label} →
+            </button>
+          ) : allTasksDone ? (
+            <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2">
+              <span className="text-sm text-white">✓</span>
+              <span className="text-sm font-semibold text-white">All tasks complete</span>
+            </div>
+          ) : null}
         </div>
         <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-white/10" />
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-6 right-20 h-28 w-28 rounded-full bg-white/5" />
       </div>
-
-      {allTasksDone && (
-        <div className="rounded-[1.25rem] border border-emerald-200 bg-emerald-50 px-5 py-4 text-center">
-          <p className="text-sm font-semibold text-emerald-900">All tasks complete</p>
-          <p className="mt-0.5 text-xs text-emerald-700">You have completed every prompt in this project.</p>
-        </div>
-      )}
 
       {/* Task list */}
       {tasks.length === 0 ? (
@@ -542,30 +580,39 @@ function ProjectView({
       ) : (
         <div className="space-y-3">
           {tasks.map((task, idx) => {
-            const done = donePromptsForTask(task.id);
+            const done = donePromptsForTask(task.id, task.prompts.length);
             const total = task.prompts.length;
             const complete = done >= total && total > 0;
             const inProgress = done > 0 && !complete;
             const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+            const locked = isTaskLocked(idx);
 
             return (
               <button
                 key={task.id}
                 type="button"
-                onClick={() => onSelectTask(task, idx)}
-                className="group w-full rounded-[1.25rem] border border-slate-200 bg-white p-5 text-left transition hover:border-primary/30 hover:bg-[#f9fbff]"
+                disabled={locked}
+                onClick={() => {
+                  if (locked) return;
+                  const submitted = submittedSetForTask(task.id);
+                  const firstIncomplete = task.prompts.findIndex((_, i) => !submitted.has(i));
+                  onSelectTask(task, idx, firstIncomplete >= 0 ? firstIncomplete : 0);
+                }}
+                className={[
+                  "group w-full rounded-[1.25rem] border p-5 text-left transition",
+                  locked
+                    ? "cursor-not-allowed border-slate-100 bg-slate-50 opacity-55"
+                    : "border-slate-200 bg-white hover:border-primary/30 hover:bg-[#f9fbff]",
+                ].join(" ")}
               >
                 <div className="flex items-start gap-4">
-                  {/* Number / check circle */}
                   <div className={[
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold transition",
-                    complete
-                      ? "bg-emerald-100 text-emerald-600"
-                      : inProgress
-                        ? "bg-primary/10 text-primary"
-                        : "bg-slate-100 text-slate-400",
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                    complete ? "bg-emerald-100 text-emerald-600"
+                      : inProgress ? "bg-primary/10 text-primary"
+                      : "bg-slate-100 text-slate-400",
                   ].join(" ")}>
-                    {complete ? "✓" : String(idx + 1).padStart(2, "0")}
+                    {complete ? "✓" : locked ? "⚿" : String(idx + 1).padStart(2, "0")}
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -574,15 +621,14 @@ function ProjectView({
                       <div className="flex shrink-0 items-center gap-2">
                         <span className={[
                           "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                          complete
-                            ? "bg-emerald-100 text-emerald-700"
-                            : inProgress
-                              ? "bg-blue-100 text-blue-700"
-                              : "bg-slate-100 text-slate-500",
+                          complete ? "bg-emerald-100 text-emerald-700"
+                            : inProgress ? "bg-blue-100 text-blue-700"
+                            : locked ? "bg-slate-100 text-slate-400"
+                            : "bg-slate-100 text-slate-500",
                         ].join(" ")}>
-                          {complete ? "Done" : inProgress ? "In progress" : "Not started"}
+                          {complete ? "Done" : inProgress ? "In progress" : locked ? "Locked" : "Not started"}
                         </span>
-                        <span className="text-muted/40 transition group-hover:text-primary">→</span>
+                        {!locked && <span className="text-muted/40 transition group-hover:text-primary">→</span>}
                       </div>
                     </div>
 
@@ -616,28 +662,35 @@ function TaskView({
   speaker,
   assignment,
   project,
+  taskIndex,
   task,
+  initialPromptIndex,
   sessions,
   onBack,
+  onNavigateTask,
 }: {
   speaker: DCSpeaker;
   assignment: DCAssignment;
   project: DCProject;
+  taskIndex: number;
   task: DCTaskTemplate;
+  initialPromptIndex: number;
   sessions: DCSession[];
   onBack: () => void;
+  onNavigateTask: (taskIndex: number, promptIndex: number) => void;
 }) {
+  const tasks = project.tasks ?? [];
   const prompts = task.prompts ?? [];
+  const isLastTask = taskIndex >= tasks.length - 1;
+  const prevTask = taskIndex > 0 ? tasks[taskIndex - 1] : null;
 
-  // Which prompts already have uploaded sessions
   const submittedSet = new Set(
     sessions
       .filter((s) => s.taskId === task.id && s.promptIndex != null)
       .map((s) => s.promptIndex!)
   );
 
-  const firstUndone = prompts.findIndex((_, i) => !submittedSet.has(i));
-  const [promptIdx, setPromptIdx] = useState(firstUndone >= 0 ? firstUndone : 0);
+  const [promptIdx, setPromptIdx] = useState(initialPromptIndex);
   const [blobs, setBlobs] = useState<Map<number, PromptBlob>>(new Map());
   const [recordState, setRecordState] = useState<PromptRecordState>("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -656,17 +709,16 @@ function TaskView({
   const maxSec = currentPrompt?.maxSeconds ?? 30;
   const currentBlob = blobs.get(promptIdx) ?? null;
   const isSubmitted = submittedSet.has(promptIdx);
+  const isLastPrompt = promptIdx === prompts.length - 1;
+  const canGoNext = submittedSet.has(promptIdx) || blobs.has(promptIdx);
+  const canGoPrev = promptIdx > 0 || taskIndex > 0;
+  const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
 
-  // Auto-stop at maxSeconds
   useEffect(() => {
     if (recordState === "recording" && elapsed >= maxSec) {
       stopRecording();
     }
   }, [elapsed, maxSec, recordState]);
-
-  // All prompts are either submitted or have a local blob
-  const allDone = prompts.every((_, i) => submittedSet.has(i) || blobs.has(i));
-  const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
 
   function stopVisualizer() {
     if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
@@ -740,22 +792,44 @@ function TaskView({
     setRecordState("idle");
   }
 
-  function goToPrompt(idx: number) {
-    if (recordState === "recording") return; // don't navigate while recording
-    setRecordState(blobs.has(idx) || submittedSet.has(idx) ? "stopped" : "idle");
+  function navigateToPrompt(idx: number) {
+    if (recordState === "recording") return;
+    setPromptIdx(idx);
     setElapsed(0);
     setError("");
-    setPromptIdx(idx);
+    setRecordState(blobs.has(idx) ? "stopped" : "idle");
   }
 
-  async function handleSubmitTask() {
-    if (!allDone) return;
+  function handleNext() {
+    if (!canGoNext || recordState === "recording") return;
+    if (!isLastPrompt) {
+      navigateToPrompt(promptIdx + 1);
+    } else {
+      void submitAndContinue();
+    }
+  }
+
+  function handlePrev() {
+    if (recordState === "recording") return;
+    if (promptIdx > 0) {
+      navigateToPrompt(promptIdx - 1);
+    } else if (taskIndex > 0 && prevTask) {
+      onNavigateTask(taskIndex - 1, prevTask.prompts.length - 1);
+    }
+  }
+
+  async function submitAndContinue() {
+    if (newBlobCount === 0) {
+      if (!isLastTask) onNavigateTask(taskIndex + 1, 0);
+      else onBack();
+      return;
+    }
     setSubmitting(true);
     setError("");
     let uploaded = 0;
     try {
       for (const [idx, entry] of Array.from(blobs.entries())) {
-        if (submittedSet.has(idx)) continue; // already uploaded
+        if (submittedSet.has(idx)) continue;
         await submitDCSession({
           projectId: assignment.projectId,
           projectName: assignment.projectName,
@@ -778,10 +852,11 @@ function TaskView({
         uploaded++;
         setSubmitProgress(Math.round((uploaded / newBlobCount) * 100));
       }
-      // Revoke blob URLs
       blobs.forEach((b) => URL.revokeObjectURL(b.url));
       setBlobs(new Map());
-      onBack(); // go back to project view — sessions subscription will show updated state
+      setSubmitting(false);
+      if (!isLastTask) onNavigateTask(taskIndex + 1, 0);
+      else onBack();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       setError(`Upload failed: ${detail}`);
@@ -810,6 +885,13 @@ function TaskView({
 
   const timerColor = elapsed >= maxSec * 0.9 ? "text-rose-500" : elapsed >= maxSec * 0.7 ? "text-amber-500" : "text-ink";
 
+  // Next button label
+  const nextLabel = isLastPrompt
+    ? isLastTask
+      ? (newBlobCount > 0 ? "Submit task ✓" : "Done ✓")
+      : (newBlobCount > 0 ? "Submit & next task →" : "Next task →")
+    : "Next →";
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -818,28 +900,28 @@ function TaskView({
           <span>←</span> {assignment.projectName}
         </button>
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-xl font-semibold text-ink">{task.title}</h1>
+          <div>
+            <p className="text-[11px] font-medium text-muted">Task {taskIndex + 1} of {tasks.length}</p>
+            <h1 className="mt-0.5 text-xl font-semibold text-ink">{task.title}</h1>
+          </div>
           <span className="shrink-0 rounded-full border border-slate-200 bg-panelStrong px-3 py-0.5 text-xs text-muted">
             {promptIdx + 1} / {prompts.length}
           </span>
         </div>
       </div>
 
-      {/* Prompt stepper */}
-      <div className="flex gap-1.5 flex-wrap">
+      {/* Prompt stepper — visual only, no interaction */}
+      <div className="flex gap-1.5">
         {prompts.map((_, i) => {
           const done = submittedSet.has(i) || blobs.has(i);
           const active = i === promptIdx;
           return (
-            <button
+            <div
               key={i}
-              type="button"
-              onClick={() => goToPrompt(i)}
               className={[
-                "h-2 flex-1 min-w-[20px] rounded-full transition-all",
+                "h-2 flex-1 rounded-full transition-all duration-300",
                 active ? "bg-primary" : done ? "bg-emerald-400" : "bg-slate-200",
               ].join(" ")}
-              aria-label={`Prompt ${i + 1}`}
             />
           );
         })}
@@ -856,7 +938,7 @@ function TaskView({
       {isSubmitted && !blobs.has(promptIdx) && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
           <span className="text-emerald-500">✓</span>
-          <p className="text-sm text-emerald-800">This prompt was already submitted. You can re-record it if needed.</p>
+          <p className="text-sm text-emerald-800">Already submitted. Re-record below if needed.</p>
         </div>
       )}
 
@@ -901,7 +983,7 @@ function TaskView({
         )}
       </div>
 
-      {/* Playback + nav */}
+      {/* Playback */}
       {recordState === "stopped" && currentBlob && (
         <div className="space-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-4">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
@@ -912,17 +994,38 @@ function TaskView({
         </div>
       )}
 
-      {/* Submit task */}
-      {allDone && newBlobCount > 0 && !submitting && (
-        <button
-          type="button"
-          onClick={() => void handleSubmitTask()}
-          className="w-full rounded-full bg-emerald-600 py-3.5 text-sm font-semibold text-white hover:bg-emerald-700 active:scale-[0.98]"
-        >
-          Submit task ({newBlobCount} recording{newBlobCount !== 1 ? "s" : ""}) ✓
-        </button>
+      {/* Navigation */}
+      {!submitting && (canGoPrev || canGoNext) && (
+        <div className="flex gap-3">
+          {canGoPrev ? (
+            <button
+              type="button"
+              onClick={handlePrev}
+              disabled={recordState === "recording"}
+              className="flex-1 rounded-full border border-slate-200 py-3 text-sm font-semibold text-muted transition hover:bg-slate-50 disabled:opacity-40"
+            >
+              ← Previous
+            </button>
+          ) : (
+            <div className="flex-1" />
+          )}
+          {canGoNext && (
+            <button
+              type="button"
+              onClick={handleNext}
+              disabled={recordState === "recording"}
+              className={[
+                "flex-1 rounded-full py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-40",
+                isLastPrompt ? "bg-emerald-600 hover:bg-emerald-700" : "bg-primary hover:bg-primaryStrong",
+              ].join(" ")}
+            >
+              {nextLabel}
+            </button>
+          )}
+        </div>
       )}
 
+      {/* Upload progress */}
       {submitting && (
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-5">
           <div className="flex items-center gap-3">
@@ -1450,7 +1553,7 @@ function SpeakerPortal({ user }: { user: User }) {
   const [activeAssignment, setActiveAssignment] = useState<DCAssignment | null>(null);
   const [activeProject, setActiveProject] = useState<DCProject | null>(null);
   const [activeProjectLoading, setActiveProjectLoading] = useState(false);
-  const [activeTask, setActiveTask] = useState<{ task: DCTaskTemplate; taskIndex: number } | null>(null);
+  const [activeTask, setActiveTask] = useState<{ task: DCTaskTemplate; taskIndex: number; initialPromptIndex: number } | null>(null);
 
   function navigateTo(s: SpeakerSection) {
     // Reset project drill-down when switching sections
@@ -1574,12 +1677,23 @@ function SpeakerPortal({ user }: { user: User }) {
     if (activeTask && activeAssignment && activeProject) {
       return (
         <TaskView
+          key={activeTask.taskIndex}
           speaker={speaker!}
           assignment={activeAssignment}
           project={activeProject}
+          taskIndex={activeTask.taskIndex}
           task={activeTask.task}
+          initialPromptIndex={activeTask.initialPromptIndex}
           sessions={sessions.filter((s) => s.assignmentId === activeAssignment.id)}
           onBack={() => setActiveTask(null)}
+          onNavigateTask={(taskIdx, promptIdx) => {
+            const allTasks = activeProject.tasks ?? [];
+            if (taskIdx >= 0 && taskIdx < allTasks.length) {
+              setActiveTask({ task: allTasks[taskIdx], taskIndex: taskIdx, initialPromptIndex: promptIdx });
+            } else {
+              setActiveTask(null);
+            }
+          }}
         />
       );
     }
@@ -1597,7 +1711,7 @@ function SpeakerPortal({ user }: { user: User }) {
           project={activeProject}
           sessions={sessions.filter((s) => s.assignmentId === activeAssignment.id)}
           onBack={() => { setActiveAssignment(null); setActiveTask(null); }}
-          onSelectTask={(task, taskIndex) => setActiveTask({ task, taskIndex })}
+          onSelectTask={(task, taskIndex, promptIndex) => setActiveTask({ task, taskIndex, initialPromptIndex: promptIndex })}
         />
       );
     }
