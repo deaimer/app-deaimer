@@ -247,59 +247,17 @@ function GoogleMark() {
   );
 }
 
-// ─── Bottom tab bar (mobile only) ─────────────────────────────────────────────
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 
-const TABS: { section: SpeakerSection; label: string; icon: string }[] = [
-  { section: "dashboard", label: "Home",    icon: "⊞" },
-  { section: "tasks",     label: "Tasks",   icon: "☑" },
-  { section: "record",    label: "Record",  icon: "⏺" },
-  { section: "profile",   label: "Profile", icon: "◎" },
-];
-
-function BottomTabBar({
-  active,
-  onNavigate,
-}: {
-  active: SpeakerSection;
-  onNavigate: (s: SpeakerSection) => void;
-}) {
+function SpeakerMetric({ label, value, hint, className = "" }: { label: string; value: string; hint: string; className?: string }) {
   return (
-    <nav
-      className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-200 bg-white lg:hidden"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-    >
-      {TABS.map((tab) => {
-        const isRecord = tab.section === "record";
-        const isActive = active === tab.section;
-        return (
-          <button
-            key={tab.section}
-            type="button"
-            onClick={() => onNavigate(tab.section)}
-            className={[
-              "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition",
-              isRecord ? "relative" : isActive ? "text-primary" : "text-muted",
-            ].join(" ")}
-          >
-            {isRecord ? (
-              <span className={[
-                "flex h-10 w-10 items-center justify-center rounded-full text-lg shadow-md transition",
-                isActive ? "bg-primary text-white" : "bg-primary/10 text-primary",
-              ].join(" ")}>
-                {tab.icon}
-              </span>
-            ) : (
-              <span className="text-xl leading-none">{tab.icon}</span>
-            )}
-            <span className={isRecord ? (isActive ? "text-primary" : "text-muted") : ""}>{tab.label}</span>
-          </button>
-        );
-      })}
-    </nav>
+    <article className={["rounded-xl border border-slate-200 bg-white px-3 py-3 sm:px-5 sm:py-5", className].join(" ")}>
+      <p className="text-[10px] font-medium uppercase tracking-widest text-muted/60 sm:text-[11px]">{label}</p>
+      <p className="mt-1.5 text-2xl font-light tabular-nums tracking-tight text-ink sm:mt-2.5 sm:text-4xl">{value}</p>
+      <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted sm:mt-2 sm:text-xs">{hint}</p>
+    </article>
   );
 }
-
-// ─── Dashboard ────────────────────────────────────────────────────────────────
 
 function Dashboard({
   speaker,
@@ -314,47 +272,93 @@ function Dashboard({
 }) {
   const firstName = speaker.firstName || speaker.name?.split(" ")[0] || "there";
   const totalHours = sessions.reduce((sum, s) => sum + s.duration / 3600, 0);
-  const activeProjects = assignments.filter((a) => a.status === "active").length;
-  const pendingTasks = assignments.filter((a) => a.status === "active" && a.hoursCompleted < a.hoursTarget).length;
+  const activeTasks = assignments.filter((a) => a.status === "active").length;
+  const completedSessions = sessions.length;
   const recentSessions = sessions.slice(0, 5);
 
+  const quickCards = [
+    { label: "My Tasks", body: "View your assigned recording tasks and track your progress towards targets.", section: "tasks" as SpeakerSection, featured: true },
+    { label: "Record", body: "Start a new recording session for one of your active tasks.", section: "record" as SpeakerSection, featured: false },
+    { label: "Guidelines", body: "Recording tips, environment setup, and quality standards for your sessions.", section: "guidelines" as SpeakerSection, featured: false },
+  ];
+
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Welcome back, {firstName}</h1>
-        <p className="mt-0.5 text-sm text-muted">Your recording activity at a glance.</p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          { label: "Total hours", value: totalHours.toFixed(2) + "h" },
-          { label: "Sessions",     value: String(sessions.length) },
-          { label: "Active tasks", value: String(activeProjects) },
-          { label: "Pending",      value: String(pendingTasks) },
-        ].map((card) => (
-          <article key={card.label} className="rounded-xl border border-slate-200 bg-white px-4 py-4">
-            <p className="text-[10px] font-medium uppercase tracking-widest text-muted/60">{card.label}</p>
-            <p className="mt-1.5 text-2xl font-light text-ink">{card.value}</p>
-          </article>
-        ))}
-      </div>
-
-      {pendingTasks > 0 && (
-        <div className="flex items-center justify-between rounded-[1.25rem] bg-gradient-to-r from-primary to-[#4ea3ff] px-5 py-4 text-white">
-          <div>
-            <p className="text-sm font-semibold">You have {pendingTasks} active task{pendingTasks !== 1 ? "s" : ""}</p>
-            <p className="mt-0.5 text-xs text-white/80">Keep recording to hit your target.</p>
+    <div className="space-y-6">
+      {/* Hero banner */}
+      <section className="relative overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-primary to-primaryStrong px-8 py-10 sm:px-10 sm:py-12">
+        <div className="relative z-10">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/60">Speaker portal</p>
+          <h1 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">Welcome back, {firstName}</h1>
+          <p className="mt-3 max-w-lg text-sm leading-7 text-white/75">
+            Record high-quality speech data, track your sessions, and manage your profile — all in one place.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => onNavigate("tasks")}
+              className="inline-flex items-center justify-center rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90"
+            >
+              View tasks
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate("profile")}
+              className="inline-flex items-center justify-center rounded-full border border-white/30 bg-white/10 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/20"
+            >
+              My profile
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => onNavigate("tasks")}
-            className="shrink-0 rounded-full bg-white/20 px-4 py-2 text-sm font-semibold text-white hover:bg-white/30"
-          >
-            Start →
-          </button>
         </div>
-      )}
+        <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-white/10" />
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-8 right-16 h-32 w-32 rounded-full bg-white/5" />
+      </section>
 
+      {/* Metrics */}
+      <div className="flex gap-3 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden xl:grid xl:grid-cols-4 xl:overflow-visible xl:pb-0" style={{ scrollbarWidth: "none" }}>
+        <SpeakerMetric className="w-40 shrink-0 xl:w-auto" label="Total hours" value={totalHours.toFixed(2) + "h"} hint="Total recorded audio submitted across all projects." />
+        <SpeakerMetric className="w-40 shrink-0 xl:w-auto" label="Sessions" value={String(completedSessions).padStart(2, "0")} hint="Recording sessions you have submitted." />
+        <SpeakerMetric className="w-40 shrink-0 xl:w-auto" label="Active tasks" value={String(activeTasks).padStart(2, "0")} hint="Projects currently assigned to you." />
+        <SpeakerMetric className="w-40 shrink-0 xl:w-auto" label="Profile" value={speaker.firstName ? "Ready" : "Pending"} hint="Your speaker profile completion status." />
+      </div>
+
+      {/* Quick-access cards */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+        {quickCards.map((card) =>
+          card.featured ? (
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => onNavigate(card.section)}
+              className="group relative overflow-hidden rounded-xl bg-gradient-to-br from-primary to-primaryStrong p-3 text-left sm:p-5"
+            >
+              <div className="relative z-10">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold text-white">{card.label}</p>
+                  <span className="shrink-0 text-white/60 transition group-hover:text-white">→</span>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-white/75">{card.body}</p>
+              </div>
+              <div aria-hidden="true" className="pointer-events-none absolute -right-5 -top-5 h-20 w-20 rounded-full bg-white/10" />
+              <div aria-hidden="true" className="pointer-events-none absolute -bottom-3 right-8 h-12 w-12 rounded-full bg-white/5" />
+            </button>
+          ) : (
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => onNavigate(card.section)}
+              className="group rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-primary/25 hover:bg-[#f9fbff] sm:p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-semibold text-ink">{card.label}</p>
+                <span className="shrink-0 text-muted/40 transition group-hover:text-primary">→</span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-muted">{card.body}</p>
+            </button>
+          )
+        )}
+      </div>
+
+      {/* Recent activity */}
       <div>
         <h2 className="mb-3 text-sm font-semibold text-ink">Recent Activity</h2>
         {recentSessions.length === 0 ? (
@@ -1363,26 +1367,23 @@ function SpeakerPortal({ user }: { user: User }) {
       userProfile={userProfile}
       onSignOut={() => void handleSignOut()}
     >
-      {profileComplete && <BottomTabBar active={effectiveSection} onNavigate={navigateTo} />}
-
-      <div className={[
-        "mx-auto max-w-2xl px-4 pt-6 sm:px-6 lg:max-w-3xl lg:pt-8",
-        profileComplete ? "pb-28 lg:pb-10" : "pb-10",
-      ].join(" ")}>
-        {effectiveSection === "dashboard" && (
-          <Dashboard speaker={speaker} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
-        )}
-        {effectiveSection === "tasks" && (
-          <MyTasks assignments={assignments} onRecord={handleStartRecording} />
-        )}
-        {effectiveSection === "record" && (
-          <Recorder speaker={speaker} assignment={recordingAssignment} onDone={handleRecordingDone} onPickTask={() => navigateTo("tasks")} />
-        )}
-        {effectiveSection === "profile" && (
-          <Profile speaker={speaker} onSaved={setSpeaker} isOnboarding={!profileComplete} />
-        )}
-        {effectiveSection === "guidelines" && <Guidelines />}
-      </div>
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
+          {effectiveSection === "dashboard" && (
+            <Dashboard speaker={speaker} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
+          )}
+          {effectiveSection === "tasks" && (
+            <MyTasks assignments={assignments} onRecord={handleStartRecording} />
+          )}
+          {effectiveSection === "record" && (
+            <Recorder speaker={speaker} assignment={recordingAssignment} onDone={handleRecordingDone} onPickTask={() => navigateTo("tasks")} />
+          )}
+          {effectiveSection === "profile" && (
+            <Profile speaker={speaker} onSaved={setSpeaker} isOnboarding={!profileComplete} />
+          )}
+          {effectiveSection === "guidelines" && <Guidelines />}
+        </div>
+      </main>
     </DeaimerSiteShell>
   );
 }
