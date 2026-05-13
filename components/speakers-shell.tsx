@@ -713,6 +713,7 @@ function TaskView({
   const canGoNext = submittedSet.has(promptIdx) || blobs.has(promptIdx);
   const canGoPrev = promptIdx > 0 || taskIndex > 0;
   const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
+  const submittedSession = sessions.find((s) => s.taskId === task.id && s.promptIndex === promptIdx) ?? null;
 
   useEffect(() => {
     if (recordState === "recording" && elapsed >= maxSec) {
@@ -934,11 +935,26 @@ function TaskView({
         <p className="mt-2 text-[11px] text-muted">Max {maxSec}s</p>
       </div>
 
-      {/* Already submitted badge */}
-      {isSubmitted && !blobs.has(promptIdx) && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-          <span className="text-emerald-500">✓</span>
-          <p className="text-sm text-emerald-800">Already submitted. Re-record below if needed.</p>
+      {/* Submitted preview */}
+      {isSubmitted && !blobs.has(promptIdx) && recordState === "idle" && (
+        <div className="space-y-3 rounded-[1.25rem] border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-500">✓</span>
+            <p className="text-sm font-semibold text-emerald-900">Submitted recording</p>
+          </div>
+          {submittedSession?.audioUrl ? (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <audio controls src={submittedSession.audioUrl} className="w-full rounded-xl" />
+          ) : (
+            <p className="text-xs text-emerald-700">Audio processing…</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void startRecording()}
+            className="w-full rounded-full border border-emerald-300 bg-white py-2.5 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-50 active:scale-[0.98]"
+          >
+            Record new
+          </button>
         </div>
       )}
 
@@ -958,7 +974,8 @@ function TaskView({
         )
       )}
 
-      {/* Recorder */}
+      {/* Recorder — hidden when reviewing a submitted prompt */}
+      {(recordState !== "idle" || !isSubmitted || blobs.has(promptIdx)) && (
       <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
         <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
           {formatDuration(elapsed)}
@@ -982,6 +999,7 @@ function TaskView({
           </>
         )}
       </div>
+      )}
 
       {/* Playback */}
       {recordState === "stopped" && currentBlob && (
