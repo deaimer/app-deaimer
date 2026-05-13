@@ -560,21 +560,32 @@ function ProjectView({
             <p className="mt-1.5 text-[11px] text-white/50">{overallProgress}% complete</p>
           </div>
           {/* CTA */}
-          {effectiveSubmitted ? (
-            <div className="mt-5 flex flex-wrap gap-3">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2">
-                <span className="text-sm text-white">✓</span>
-                <span className="text-sm font-semibold text-white">Submitted for review</span>
+          {effectiveSubmitted ? (() => {
+            const allApproved = sessions.length > 0 && sessions.every((s) => s.qaStatus === "approved");
+            if (allApproved) {
+              return (
+                <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-emerald-400/30 px-4 py-2">
+                  <span className="text-sm text-white">✓</span>
+                  <span className="text-sm font-semibold text-white">Approved</span>
+                </div>
+              );
+            }
+            return (
+              <div className="mt-5 flex flex-wrap gap-3">
+                <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2">
+                  <span className="text-sm text-white">✓</span>
+                  <span className="text-sm font-semibold text-white">Submitted for review</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onNavigateToReviews}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+                >
+                  View progress →
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={onNavigateToReviews}
-                className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
-              >
-                View progress →
-              </button>
-            </div>
-          ) : startContinue ? (
+            );
+          })() : startContinue ? (
             <button
               type="button"
               onClick={() => onSelectTask(tasks[startContinue.taskIndex], startContinue.taskIndex, startContinue.promptIndex)}
@@ -604,83 +615,83 @@ function ProjectView({
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-6 right-20 h-28 w-28 rounded-full bg-white/5" />
       </div>
 
-      {/* Task list */}
-      {tasks.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-10 text-center">
-          <p className="text-sm text-muted">No tasks have been added to this project yet.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {tasks.map((task, idx) => {
-            const done = donePromptsForTask(task.id, task.prompts.length);
-            const total = task.prompts.length;
-            const complete = done >= total && total > 0;
-            const inProgress = done > 0 && !complete;
-            const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-            const hasRejection = sessions.some((s) => s.taskId === task.id && s.qaStatus === "rejected");
-            // locked by sequencing, OR submitted for review with no rejections to fix
-            const locked = isTaskLocked(idx) || (effectiveSubmitted && !hasRejection);
+      {/* Task list — hidden once submitted */}
+      {!effectiveSubmitted && (
+        tasks.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white px-6 py-10 text-center">
+            <p className="text-sm text-muted">No tasks have been added to this project yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {tasks.map((task, idx) => {
+              const done = donePromptsForTask(task.id, task.prompts.length);
+              const total = task.prompts.length;
+              const complete = done >= total && total > 0;
+              const inProgress = done > 0 && !complete;
+              const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+              const locked = isTaskLocked(idx);
 
-            return (
-              <button
-                key={task.id}
-                type="button"
-                disabled={locked}
-                onClick={() => {
-                  if (locked) return;
-                  const submitted = submittedSetForTask(task.id);
-                  const firstIncomplete = task.prompts.findIndex((_, i) => !submitted.has(i));
-                  onSelectTask(task, idx, firstIncomplete >= 0 ? firstIncomplete : 0);
-                }}
-                className={[
-                  "group w-full rounded-[1.25rem] border p-5 text-left transition",
-                  locked
-                    ? "cursor-not-allowed border-slate-100 bg-slate-50 opacity-55"
-                    : "border-slate-200 bg-white hover:border-primary/30 hover:bg-[#f9fbff]",
-                ].join(" ")}
-              >
-                <div className="flex items-start gap-4">
-                  <div className={[
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold",
-                    complete ? "bg-emerald-100 text-emerald-600"
-                      : inProgress ? "bg-primary/10 text-primary"
-                      : "bg-slate-100 text-slate-400",
-                  ].join(" ")}>
-                    {complete ? "✓" : locked ? "⚿" : String(idx + 1).padStart(2, "0")}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-ink">{task.title}</p>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className={[
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                          complete ? "bg-emerald-100 text-emerald-700"
-                            : inProgress ? "bg-blue-100 text-blue-700"
-                            : locked ? "bg-slate-100 text-slate-400"
-                            : "bg-slate-100 text-slate-500",
-                        ].join(" ")}>
-                          {complete ? "Done" : inProgress ? "In progress" : locked ? "Locked" : "Not started"}
-                        </span>
-                        {!locked && <span className="text-muted/40 transition group-hover:text-primary">→</span>}
-                      </div>
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  disabled={locked}
+                  onClick={() => {
+                    if (locked) return;
+                    const submitted = submittedSetForTask(task.id);
+                    const firstIncomplete = task.prompts.findIndex((_, i) => !submitted.has(i));
+                    onSelectTask(task, idx, firstIncomplete >= 0 ? firstIncomplete : 0);
+                  }}
+                  className={[
+                    "group w-full rounded-[1.25rem] border p-5 text-left transition",
+                    locked
+                      ? "cursor-not-allowed border-slate-100 bg-slate-50 opacity-55"
+                      : "border-slate-200 bg-white hover:border-primary/30 hover:bg-[#f9fbff]",
+                  ].join(" ")}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={[
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                      complete ? "bg-emerald-100 text-emerald-600"
+                        : inProgress ? "bg-primary/10 text-primary"
+                        : "bg-slate-100 text-slate-400",
+                    ].join(" ")}>
+                      {complete ? "✓" : locked ? "⚿" : String(idx + 1).padStart(2, "0")}
                     </div>
 
-                    <div className="mt-3">
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className={["h-full rounded-full transition-all duration-500", complete ? "bg-emerald-400" : "bg-primary"].join(" ")}
-                          style={{ width: `${progress}%` }}
-                        />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-sm font-semibold text-ink">{task.title}</p>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className={[
+                            "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                            complete ? "bg-emerald-100 text-emerald-700"
+                              : inProgress ? "bg-blue-100 text-blue-700"
+                              : locked ? "bg-slate-100 text-slate-400"
+                              : "bg-slate-100 text-slate-500",
+                          ].join(" ")}>
+                            {complete ? "Done" : inProgress ? "In progress" : locked ? "Locked" : "Not started"}
+                          </span>
+                          {!locked && <span className="text-muted/40 transition group-hover:text-primary">→</span>}
+                        </div>
                       </div>
-                      <p className="mt-1.5 text-[11px] text-muted">{done} of {total} prompt{total !== 1 ? "s" : ""} recorded</p>
+
+                      <div className="mt-3">
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className={["h-full rounded-full transition-all duration-500", complete ? "bg-emerald-400" : "bg-primary"].join(" ")}
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                        <p className="mt-1.5 text-[11px] text-muted">{done} of {total} prompt{total !== 1 ? "s" : ""} recorded</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                </button>
+              );
+            })}
+          </div>
+        )
       )}
     </div>
   );
