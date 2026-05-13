@@ -245,17 +245,23 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                   <td className="px-4 py-3 text-muted">{p.client}</td>
                   <td className="px-4 py-3 text-muted">{p.dialect}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-primary"
-                          style={{ width: `${Math.min(100, (p.hoursCompleted / (p.targetHours || 1)) * 100)}%` }}
-                        />
-                      </div>
+                    {p.recordingMode === "utterance" ? (
                       <span className="text-xs text-muted">
-                        {p.hoursCompleted.toFixed(1)}/{p.targetHours}h
+                        {p.tasks.reduce((s, t) => s + t.prompts.length, 0)} prompts
                       </span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-primary"
+                            style={{ width: `${Math.min(100, (p.hoursCompleted / (p.targetHours || 1)) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-muted">
+                          {p.hoursCompleted.toFixed(1)}/{p.targetHours}h
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-muted">{p.participantCount}</td>
                   <td className="px-4 py-3 text-muted">{p.deadline || "—"}</td>
@@ -337,11 +343,16 @@ function ProjectDetail({
   const [showAssign, setShowAssign] = useState(false);
   const [assignEmail, setAssignEmail] = useState("");
   const [assignName, setAssignName] = useState("");
-  const [assignHours, setAssignHours] = useState(5);
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState("");
 
-  const progress = Math.min(100, (project.hoursCompleted / (project.targetHours || 1)) * 100);
+  const isUtterance = project.recordingMode === "utterance";
+  const totalExpectedPrompts = isUtterance
+    ? project.tasks.reduce((sum, t) => sum + t.prompts.length, 0)
+    : 0;
+  const progress = isUtterance
+    ? Math.min(100, totalExpectedPrompts > 0 ? (sessions.length / totalExpectedPrompts) * 100 : 0)
+    : Math.min(100, (project.hoursCompleted / (project.targetHours || 1)) * 100);
 
   useEffect(() => {
     const u1 = subscribeToDCAssignmentsByProject(project.id, setAssignments);
@@ -358,7 +369,7 @@ function ProjectDetail({
         project,
         assignEmail,
         assignName,
-        assignHours,
+        project.targetHours || 0,
         activeUser.email ?? "",
         activeUser.uid,
       );
@@ -405,7 +416,10 @@ function ProjectDetail({
         <div className="mt-5">
           <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
             <span>Progress</span>
-            <span>{project.hoursCompleted.toFixed(1)} / {project.targetHours}h</span>
+            {isUtterance
+              ? <span>{sessions.length} / {totalExpectedPrompts} prompts</span>
+              : <span>{project.hoursCompleted.toFixed(1)} / {project.targetHours}h</span>
+            }
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
             <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
@@ -455,12 +469,25 @@ function ProjectDetail({
                   <td className="px-4 py-3 font-medium text-ink">{a.speakerName || a.speakerEmail}</td>
                   <td className="px-4 py-3 text-muted">{a.speakerEmail}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
-                        <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (a.hoursCompleted / (a.hoursTarget || 1)) * 100)}%` }} />
+                    {isUtterance ? (() => {
+                      const done = sessions.filter((s) => s.assignmentId === a.id).length;
+                      const pct = totalExpectedPrompts > 0 ? Math.min(100, Math.round((done / totalExpectedPrompts) * 100)) : 0;
+                      return (
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="text-xs text-muted">{done}/{totalExpectedPrompts}</span>
+                        </div>
+                      );
+                    })() : (
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (a.hoursCompleted / (a.hoursTarget || 1)) * 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-muted">{a.hoursCompleted.toFixed(1)}/{a.hoursTarget}h</span>
                       </div>
-                      <span className="text-xs text-muted">{a.hoursCompleted.toFixed(1)}/{a.hoursTarget}h</span>
-                    </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-muted">{a.sessionsCount}</td>
                   <td className="px-4 py-3"><StatusBadge status={a.status} /></td>
@@ -525,16 +552,6 @@ function ProjectDetail({
               placeholder="Full name (optional if already registered)"
               value={assignName}
               onChange={(e) => setAssignName(e.target.value)}
-            />
-          </Field>
-          <Field label="Hours target" required>
-            <input
-              type="number"
-              min={1}
-              className={fieldCls}
-              value={assignHours}
-              onChange={(e) => setAssignHours(Number(e.target.value))}
-              required
             />
           </Field>
           <button
@@ -682,17 +699,19 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
   const [projects, setProjects] = useState<DCProject[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAssignment, setSelectedAssignment] = useState<DCAssignment | null>(null);
   const [filterText, setFilterText] = useState("");
 
   useEffect(() => {
     let loadedCount = 0;
-    const done = () => { if (++loadedCount >= 3) setLoading(false); };
+    const done = () => { if (++loadedCount >= 4) setLoading(false); };
     const u1 = subscribeToDCAssignments((a) => { setAssignments(a); done(); });
     const u2 = subscribeToDCProjects((p) => { setProjects(p); done(); });
     const u3 = subscribeToDCSessions((s) => { setSessions(s); done(); });
-    return () => { u1(); u2(); u3(); };
+    const u4 = subscribeToDCSpeakers((s) => { setSpeakers(s); done(); });
+    return () => { u1(); u2(); u3(); u4(); };
   }, []);
 
   if (selectedAssignment) {
@@ -701,6 +720,7 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
         assignment={selectedAssignment}
         sessions={sessions.filter((s) => s.assignmentId === selectedAssignment.id)}
         project={projects.find((p) => p.id === selectedAssignment.projectId) ?? null}
+        speaker={speakers.find((s) => s.email === selectedAssignment.speakerEmail) ?? null}
         onBack={() => setSelectedAssignment(null)}
       />
     );
@@ -721,12 +741,12 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
 
   return (
     <div className="space-y-6">
-      <SectionHeader title="Sessions" description="Speaker assignments and recording progress, one entry per speaker per project." />
+      <SectionHeader title="Sessions" description="One entry per speaker per project." />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <MetricCard label="Total Assignments" value={String(assignments.length)} sub="Across all projects" />
-        <MetricCard label="In Progress" value={String(totalInProgress)} sub="Recording not yet submitted" />
-        <MetricCard label="Submitted" value={String(totalSubmitted)} sub="Submitted for QA review" />
+        <MetricCard label="Total" value={String(assignments.length)} sub="Assignments" />
+        <MetricCard label="In Progress" value={String(totalInProgress)} sub="Recording" />
+        <MetricCard label="Submitted" value={String(totalSubmitted)} sub="Awaiting QA" />
       </div>
 
       <input
@@ -741,67 +761,66 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
       ) : filtered.length === 0 ? (
         <EmptyState message="No assignments found." />
       ) : (
-        <div className="space-y-3">
-          {filtered.map((a) => {
-            const project = projects.find((p) => p.id === a.projectId);
-            const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
-            const totalPrompts = project
-              ? project.tasks.reduce((sum, t) => sum + t.prompts.length, 0)
-              : 0;
-            const completedCount = assignmentSessions.length;
-            const pct = totalPrompts > 0 ? Math.min(100, Math.round((completedCount / totalPrompts) * 100)) : 0;
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Speaker", "Gender · Dialect", "Project", "Progress", "Status", "Assigned", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.map((a) => {
+                const project = projects.find((p) => p.id === a.projectId);
+                const sp = speakers.find((s) => s.email === a.speakerEmail);
+                const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+                const totalPrompts = project
+                  ? project.tasks.reduce((sum, t) => sum + t.prompts.length, 0)
+                  : 0;
+                const pct = totalPrompts > 0 ? Math.min(100, Math.round((assignmentSessions.length / totalPrompts) * 100)) : 0;
 
-            return (
-              <div key={a.id} className="rounded-[1.25rem] border border-slate-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs text-muted">{a.projectName}</p>
-                    <h3 className="font-semibold text-ink">{a.speakerName}</h3>
-                    <p className="text-xs text-muted">{a.speakerEmail}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {a.submittedForReview ? (
-                      <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-medium text-blue-800">
-                        Submitted for Review
-                      </span>
-                    ) : (
-                      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
-                        In Progress
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {totalPrompts > 0 && (
-                  <div className="mt-4">
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <p className="text-xs text-muted">{completedCount} / {totalPrompts} prompts recorded</p>
-                      <p className="text-xs font-semibold text-ink">{pct}%</p>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-4 flex items-center justify-between">
-                  <p className="text-xs text-muted">
-                    {assignmentSessions.length} recordings · Assigned {formatDate(a.assignedAt)}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAssignment(a)}
-                    className="rounded-full border border-slate-200 px-3.5 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
-                  >
-                    View →
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+                return (
+                  <tr key={a.id} className="group hover:bg-panelStrong/50">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-ink">{sp?.name || a.speakerName || "—"}</p>
+                      <p className="text-xs text-muted">{a.speakerEmail}</p>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted">
+                      {[sp?.gender, sp?.dialect].filter(Boolean).join(" · ") || "—"}
+                    </td>
+                    <td className="px-4 py-3 text-muted">{a.projectName}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="text-xs tabular-nums text-muted">
+                          {assignmentSessions.length}/{totalPrompts > 0 ? totalPrompts : "?"}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {a.submittedForReview ? (
+                        <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-medium text-blue-800">Submitted</span>
+                      ) : (
+                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">In Progress</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted">{formatDate(a.assignedAt)}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAssignment(a)}
+                        className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary opacity-0 hover:bg-primary/10 group-hover:opacity-100"
+                      >
+                        View →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -811,16 +830,26 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
 // ─── Assignment Detail (Sessions) ─────────────────────────────────────────────
 
 function AssignmentDetail({
-  assignment, sessions, project, onBack,
+  assignment, sessions, project, speaker, onBack,
 }: {
   assignment: DCAssignment;
   sessions: DCSession[];
   project: DCProject | null;
+  speaker: DCSpeaker | null;
   onBack: () => void;
 }) {
   const tasks = project?.tasks ?? [];
   const totalPrompts = tasks.reduce((sum, t) => sum + t.prompts.length, 0);
   const pct = totalPrompts > 0 ? Math.min(100, Math.round((sessions.length / totalPrompts) * 100)) : 0;
+
+  const profileFields = [
+    { label: "Gender", value: speaker?.gender || "—" },
+    { label: "Age", value: speaker?.age || "—" },
+    { label: "Dialect", value: speaker?.dialect || "—" },
+    { label: "Region", value: speaker?.region || "—" },
+    { label: "Country", value: speaker?.country || "—" },
+    { label: "Languages", value: speaker?.languages?.join(", ") || "—" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -832,7 +861,7 @@ function AssignmentDetail({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs text-muted">{assignment.projectName}</p>
-            <h2 className="mt-0.5 text-xl font-semibold text-ink">{assignment.speakerName}</h2>
+            <h2 className="mt-0.5 text-xl font-semibold text-ink">{speaker?.name || assignment.speakerName}</h2>
             <p className="text-sm text-muted">{assignment.speakerEmail}</p>
           </div>
           {assignment.submittedForReview ? (
@@ -844,6 +873,15 @@ function AssignmentDetail({
               In Progress
             </span>
           )}
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-6">
+          {profileFields.map((f) => (
+            <div key={f.label} className="rounded-xl border border-slate-100 bg-panelStrong px-3 py-2.5">
+              <p className="text-[10px] uppercase tracking-widest text-muted">{f.label}</p>
+              <p className="mt-0.5 text-sm font-medium text-ink capitalize">{f.value}</p>
+            </div>
+          ))}
         </div>
 
         {totalPrompts > 0 && (
@@ -858,7 +896,7 @@ function AssignmentDetail({
           </div>
         )}
 
-        <div className="mt-5 grid grid-cols-3 gap-3">
+        <div className="mt-4 grid grid-cols-3 gap-3">
           {[
             { label: "Recordings", value: String(sessions.length) },
             { label: "Tasks", value: String(tasks.length) },

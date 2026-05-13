@@ -231,6 +231,7 @@ function isProfileComplete(speaker: DCSpeaker) {
     speaker.firstName &&
     speaker.lastName &&
     speaker.dateOfBirth &&
+    speaker.gender &&
     speaker.country &&
     speaker.region &&
     speaker.languages.length > 0 &&
@@ -471,6 +472,8 @@ function ProjectView({
 }) {
   const tasks = project.tasks ?? [];
   const [submitting, setSubmitting] = useState(false);
+  const [localSubmitted, setLocalSubmitted] = useState(false);
+  const effectiveSubmitted = localSubmitted || assignment.submittedForReview;
 
   function submittedSetForTask(taskId: string): Set<number> {
     return new Set(
@@ -557,7 +560,7 @@ function ProjectView({
             <p className="mt-1.5 text-[11px] text-white/50">{overallProgress}% complete</p>
           </div>
           {/* CTA */}
-          {assignment.submittedForReview ? (
+          {effectiveSubmitted ? (
             <div className="mt-5 flex flex-wrap gap-3">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2">
                 <span className="text-sm text-white">✓</span>
@@ -586,7 +589,9 @@ function ProjectView({
                 disabled={submitting}
                 onClick={() => {
                   setSubmitting(true);
-                  void submitAssignmentForReview(assignment.id).finally(() => setSubmitting(false));
+                  void submitAssignmentForReview(assignment.id)
+                    .then(() => setLocalSubmitted(true))
+                    .finally(() => setSubmitting(false));
                 }}
                 className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90 active:scale-[0.97] disabled:opacity-60"
               >
@@ -614,7 +619,7 @@ function ProjectView({
             const progress = total > 0 ? Math.round((done / total) * 100) : 0;
             const hasRejection = sessions.some((s) => s.taskId === task.id && s.qaStatus === "rejected");
             // locked by sequencing, OR submitted for review with no rejections to fix
-            const locked = isTaskLocked(idx) || (assignment.submittedForReview && !hasRejection);
+            const locked = isTaskLocked(idx) || (effectiveSubmitted && !hasRejection);
 
             return (
               <button
@@ -1097,41 +1102,585 @@ function TaskView({
 
 // ─── Reviews ─────────────────────────────────────────────────────────────────
 
+const QA_COLOR: Record<string, string> = {
+  approved: "bg-emerald-100 text-emerald-700",
+  rejected: "bg-rose-100 text-rose-700",
+  "in-review": "bg-amber-100 text-amber-700",
+  pending: "bg-slate-100 text-slate-500",
+};
+const QA_LABEL: Record<string, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+  "in-review": "In review",
+  pending: "Pending",
+};
+
+// ─── Re-record flow ───────────────────────────────────────────────────────────
+
+function ReRecordFlow({
+  assignment,
+  project,
+  speaker,
+  rejectedSessions,
+  onDone,
+}: {
+  assignment: DCAssignment;
+  project: DCProject | null;
+  speaker: DCSpeaker;
+  rejectedSessions: DCSession[];
+  onDone: () => void;
+}) {
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [blobs, setBlobs] = useState<Map<number, Blob>>(new Map());
+  const [uploadedSet, setUploadedSet] = useState<Set<number>>(new Set());
+  const [recordState, setRecordState] = useState<"idle" | "recording" | "stopped">("idle");
+  const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitDone, setSubmitDone] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const elapsedRef = useRef(0);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+  }, []);
+
+  const session = rejectedSessions[currentIdx];
+  const tasks = project?.tasks ?? [];
+  const taskTitle = tasks.find((t) => t.id === session?.taskId)?.title ?? "";
+  const isFirst = currentIdx === 0;
+  const isLast = currentIdx >= rejectedSessions.length - 1;
+  const currentBlob = blobs.get(currentIdx) ?? null;
+  const allUploaded = uploadedSet.size === rejectedSessions.length;
+
+  function stopTimer() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }
+
+  function stopStream() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }
+
+  async function startRecording() {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const mr = new MediaRecorder(stream, { mimeType });
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType });
+        setBlobs((prev) => new Map(prev).set(currentIdx, blob));
+        setRecordState("stopped");
+        stopStream();
+      };
+      mr.start();
+      mediaRecorderRef.current = mr;
+      setRecordState("recording");
+      setElapsed(0);
+      elapsedRef.current = 0;
+      timerRef.current = setInterval(() => {
+        setElapsed((e) => { const n = e + 1; elapsedRef.current = n; return n; });
+      }, 1000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Microphone access denied");
+    }
+  }
+
+  function stopRecording() {
+    stopTimer();
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    stopStream();
+  }
+
+  function navigateTo(idx: number) {
+    if (recordState === "recording") stopRecording();
+    setCurrentIdx(idx);
+    setRecordState("idle");
+    setElapsed(0);
+    elapsedRef.current = 0;
+    setError("");
+  }
+
+  async function uploadCurrent() {
+    const blob = blobs.get(currentIdx);
+    if (!blob || uploadedSet.has(currentIdx) || !session) return;
+    setError("");
+    try {
+      await submitDCSession({
+        projectId: assignment.projectId,
+        projectName: assignment.projectName,
+        speakerId: speaker.email,
+        speakerName: speaker.name,
+        assignmentId: assignment.id,
+        taskId: session.taskId,
+        promptIndex: session.promptIndex,
+        promptText: session.promptText,
+        audioBlob: blob,
+        mimeType: blob.type || "audio/webm",
+        duration: elapsedRef.current,
+        sampleRate: 44100,
+        bitDepth: 16,
+        gender: speaker.gender,
+        age: speaker.age,
+        dialect: speaker.dialect,
+        region: speaker.region,
+      });
+      setUploadedSet((prev) => new Set(prev).add(currentIdx));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    }
+  }
+
+  async function handleReSubmit() {
+    setSubmitting(true);
+    setError("");
+    try {
+      // Upload any blobs not yet uploaded
+      for (let i = 0; i < rejectedSessions.length; i++) {
+        if (blobs.has(i) && !uploadedSet.has(i)) {
+          const s = rejectedSessions[i];
+          const blob = blobs.get(i)!;
+          await submitDCSession({
+            projectId: assignment.projectId,
+            projectName: assignment.projectName,
+            speakerId: speaker.email,
+            speakerName: speaker.name,
+            assignmentId: assignment.id,
+            taskId: s.taskId,
+            promptIndex: s.promptIndex,
+            promptText: s.promptText,
+            audioBlob: blob,
+            mimeType: blob.type || "audio/webm",
+            duration: 0,
+            sampleRate: 44100,
+            bitDepth: 16,
+            gender: speaker.gender,
+            age: speaker.age,
+            dialect: speaker.dialect,
+            region: speaker.region,
+          });
+        }
+      }
+      await submitAssignmentForReview(assignment.id);
+      setSubmitDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to submit");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (submitDone) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-semibold text-ink sm:text-2xl">Reviews</h1>
+        <div className="rounded-[1.5rem] border border-emerald-200 bg-emerald-50 px-6 py-12 text-center">
+          <p className="text-3xl">✓</p>
+          <p className="mt-3 text-base font-semibold text-emerald-900">Re-submitted for review</p>
+          <p className="mt-1 text-sm text-emerald-700">Your updated recordings have been sent. You'll be notified once reviewed.</p>
+          <button
+            type="button"
+            onClick={onDone}
+            className="mt-5 rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            Back to reviews
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={onDone} className="text-sm font-medium text-muted hover:text-primary">
+          ← Back
+        </button>
+        <div>
+          <h1 className="text-xl font-semibold text-ink sm:text-2xl">Re-record</h1>
+          <p className="text-xs text-muted">Rejection {currentIdx + 1} of {rejectedSessions.length}</p>
+        </div>
+      </div>
+
+      {/* Stepper dots */}
+      {rejectedSessions.length > 1 && (
+        <div className="flex gap-1.5">
+          {rejectedSessions.map((_, i) => (
+            <div
+              key={i}
+              className={`h-1.5 flex-1 rounded-full transition-all ${
+                uploadedSet.has(i)
+                  ? "bg-emerald-400"
+                  : i === currentIdx
+                    ? "bg-primary"
+                    : "bg-slate-200"
+              }`}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Rejection reason banner */}
+      {session?.qaNote && (
+        <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+          <span className="mt-0.5 shrink-0 text-rose-500">✕</span>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-rose-600">Rejection reason</p>
+            <p className="mt-0.5 text-sm text-rose-900">{session.qaNote}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Prompt card */}
+      <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
+        {taskTitle && (
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">{taskTitle}</p>
+        )}
+        <p className="text-base font-medium leading-relaxed text-ink">{session?.promptText ?? "—"}</p>
+      </div>
+
+      {/* Already uploaded state */}
+      {uploadedSet.has(currentIdx) ? (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <span className="text-emerald-500">✓</span>
+          <p className="text-sm font-medium text-emerald-900">Recording saved</p>
+          <button
+            type="button"
+            onClick={() => {
+              setUploadedSet((prev) => { const s = new Set(prev); s.delete(currentIdx); return s; });
+              setBlobs((prev) => { const m = new Map(prev); m.delete(currentIdx); return m; });
+              setRecordState("idle");
+            }}
+            className="ml-auto text-xs text-emerald-700 underline hover:no-underline"
+          >
+            Re-record
+          </button>
+        </div>
+      ) : (
+        /* Recording UI */
+        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
+          {error && <p className="mb-3 text-sm text-rose-600">{error}</p>}
+
+          {recordState === "idle" && !currentBlob && (
+            <div className="flex flex-col items-center gap-4 py-4">
+              <button
+                type="button"
+                onClick={() => void startRecording()}
+                className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-500 text-2xl text-white shadow-lg transition hover:bg-rose-600 active:scale-95"
+              >
+                ●
+              </button>
+              <p className="text-sm text-muted">Tap to start recording</p>
+            </div>
+          )}
+
+          {recordState === "recording" && (
+            <div className="flex flex-col items-center gap-4 py-4">
+              <button
+                type="button"
+                onClick={stopRecording}
+                className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-600 text-xl text-white shadow-lg transition hover:bg-rose-700 active:scale-95"
+              >
+                ■
+              </button>
+              <p className="font-mono text-sm text-rose-700">{elapsed}s recording…</p>
+            </div>
+          )}
+
+          {recordState === "stopped" && currentBlob && (
+            <div className="space-y-3">
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <audio controls src={URL.createObjectURL(currentBlob)} className="w-full rounded-xl" />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setBlobs((prev) => { const m = new Map(prev); m.delete(currentIdx); return m; }); setRecordState("idle"); }}
+                  className="flex-1 rounded-full border border-slate-200 py-2.5 text-sm font-semibold text-muted hover:bg-slate-50"
+                >
+                  Re-record
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void uploadCurrent()}
+                  className="flex-1 rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong"
+                >
+                  Save ✓
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Navigation */}
+      <div className="flex gap-3">
+        <button
+          type="button"
+          disabled={isFirst}
+          onClick={() => navigateTo(currentIdx - 1)}
+          className="flex-1 rounded-full border border-slate-200 py-2.5 text-sm font-semibold text-ink hover:bg-slate-50 disabled:opacity-30"
+        >
+          ← Previous
+        </button>
+        <button
+          type="button"
+          disabled={isLast}
+          onClick={() => navigateTo(currentIdx + 1)}
+          className="flex-1 rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-30"
+        >
+          Next →
+        </button>
+      </div>
+
+      {/* Re-submit */}
+      {allUploaded && (
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => void handleReSubmit()}
+          className="w-full rounded-full bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+        >
+          {submitting ? "Submitting…" : "Re-submit for review →"}
+        </button>
+      )}
+
+      {error && <p className="text-center text-sm text-rose-600">{error}</p>}
+    </div>
+  );
+}
+
+// ─── Review detail page ────────────────────────────────────────────────────────
+
+function ReviewDetail({
+  assignment,
+  assignmentSessions,
+  project,
+  onBack,
+  onReRecord,
+}: {
+  assignment: DCAssignment;
+  assignmentSessions: DCSession[];
+  project: DCProject | null;
+  onBack: () => void;
+  onReRecord: (rejected: DCSession[]) => void;
+}) {
+  const tasks = project?.tasks ?? [];
+  const rejected = assignmentSessions.filter((s) => s.qaStatus === "rejected");
+  const approved = assignmentSessions.filter((s) => s.qaStatus === "approved");
+  const inReview = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
+
+  // Build ordered list using task order from project
+  const ordered: DCSession[] = [];
+  if (tasks.length > 0) {
+    tasks.forEach((task) => {
+      task.prompts.forEach((_, pi) => {
+        const s = assignmentSessions.find((sess) => sess.taskId === task.id && sess.promptIndex === pi);
+        if (s) ordered.push(s);
+      });
+    });
+    // Append any sessions not matched above
+    assignmentSessions.forEach((s) => { if (!ordered.includes(s)) ordered.push(s); });
+  } else {
+    ordered.push(...assignmentSessions);
+  }
+
+  const rejectedOrdered = ordered.filter((s) => s.qaStatus === "rejected");
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <button type="button" onClick={onBack} className="text-sm font-medium text-muted hover:text-primary">
+            ← Reviews
+          </button>
+          <h1 className="mt-1 text-xl font-semibold text-ink sm:text-2xl">{assignment.projectName}</h1>
+          {assignment.projectDialect && (
+            <p className="text-xs font-semibold uppercase tracking-widest text-primary">{assignment.projectDialect}</p>
+          )}
+        </div>
+        {rejected.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onReRecord(rejectedOrdered)}
+            className="shrink-0 rounded-full bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"
+          >
+            Re-record {rejected.length > 1 ? `${rejected.length} rejections` : "rejection"} →
+          </button>
+        )}
+      </div>
+
+      {/* Summary chips */}
+      <div className="flex flex-wrap gap-2">
+        {rejected.length > 0 && (
+          <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700">{rejected.length} rejected</span>
+        )}
+        {inReview.length > 0 && (
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">{inReview.length} in review</span>
+        )}
+        {approved.length > 0 && (
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">{approved.length} approved</span>
+        )}
+        {approved.length === assignmentSessions.length && assignmentSessions.length > 0 && (
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">✓ All approved</span>
+        )}
+      </div>
+
+      {/* Rejections — compact with audio */}
+      {rejected.length > 0 && (
+        <div className="overflow-hidden rounded-[1.25rem] border border-rose-200 bg-white">
+          <div className="border-b border-rose-100 bg-rose-50 px-4 py-2.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-rose-600">Rejections</p>
+          </div>
+          <div className="divide-y divide-rose-50">
+            {rejectedOrdered.map((s, i) => {
+              const task = tasks.find((t) => t.id === s.taskId);
+              return (
+                <div key={s.id} className="px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] text-muted">
+                        {task ? `${task.title} · ` : ""}P{(s.promptIndex ?? i) + 1}
+                      </p>
+                      <p className="truncate text-sm font-medium text-ink">{s.promptText ?? "—"}</p>
+                      {s.qaNote && (
+                        <p className="truncate text-xs text-rose-700">{s.qaNote}</p>
+                      )}
+                    </div>
+                    <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Rejected</span>
+                  </div>
+                  {s.audioUrl && (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <audio controls src={s.audioUrl} className="mt-2 h-8 w-full rounded-lg" style={{ height: "32px" }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* In review — compact, no audio */}
+      {inReview.length > 0 && (
+        <div className="overflow-hidden rounded-[1.25rem] border border-amber-200 bg-white">
+          <div className="border-b border-amber-100 bg-amber-50 px-4 py-2.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-amber-600">Under review</p>
+          </div>
+          <div className="divide-y divide-amber-50">
+            {inReview.map((s, i) => {
+              const task = tasks.find((t) => t.id === s.taskId);
+              return (
+                <div key={s.id} className="flex items-center justify-between gap-2 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-muted">
+                      {task ? `${task.title} · ` : ""}P{(s.promptIndex ?? i) + 1}
+                    </p>
+                    <p className="truncate text-sm text-ink">{s.promptText ?? "—"}</p>
+                  </div>
+                  <span className={["shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold", QA_COLOR[s.qaStatus] ?? QA_COLOR.pending].join(" ")}>
+                    {QA_LABEL[s.qaStatus] ?? "Pending"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Approved — compact, no audio */}
+      {approved.length > 0 && (
+        <div className="overflow-hidden rounded-[1.25rem] border border-emerald-200 bg-white">
+          <div className="border-b border-emerald-100 bg-emerald-50 px-4 py-2.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-emerald-600">Approved</p>
+          </div>
+          <div className="divide-y divide-emerald-50">
+            {approved.map((s, i) => {
+              const task = tasks.find((t) => t.id === s.taskId);
+              return (
+                <div key={s.id} className="flex items-center justify-between gap-2 px-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-[11px] text-muted">
+                      {task ? `${task.title} · ` : ""}P{(s.promptIndex ?? i) + 1}
+                    </p>
+                    <p className="truncate text-sm text-ink">{s.promptText ?? "—"}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700">✓ Approved</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {assignmentSessions.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted">No recordings found for this project.</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Reviews list ─────────────────────────────────────────────────────────────
+
 function Reviews({
   assignments,
   sessions,
-  onReRecord,
+  speaker,
 }: {
   assignments: DCAssignment[];
   sessions: DCSession[];
-  onReRecord: (assignment: DCAssignment, taskId: string, promptIndex: number) => void;
+  speaker: DCSpeaker;
 }) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [selectedAssignment, setSelectedAssignment] = useState<DCAssignment | null>(null);
+  const [detailProject, setDetailProject] = useState<DCProject | null>(null);
+  const [reRecordSessions, setReRecordSessions] = useState<DCSession[] | null>(null);
+
+  useEffect(() => {
+    if (!selectedAssignment) { setDetailProject(null); return; }
+    return subscribeToDCProjectById(selectedAssignment.projectId, setDetailProject);
+  }, [selectedAssignment?.id]);
 
   const submitted = assignments.filter((a) => a.submittedForReview);
 
-  function toggle(id: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  // ── Re-record flow ──
+  if (reRecordSessions && selectedAssignment) {
+    return (
+      <ReRecordFlow
+        assignment={selectedAssignment}
+        project={detailProject}
+        speaker={speaker}
+        rejectedSessions={reRecordSessions}
+        onDone={() => setReRecordSessions(null)}
+      />
+    );
   }
 
-  const qaColor: Record<string, string> = {
-    approved: "bg-emerald-100 text-emerald-700",
-    rejected: "bg-rose-100 text-rose-700",
-    "in-review": "bg-amber-100 text-amber-700",
-    pending: "bg-slate-100 text-slate-500",
-  };
+  // ── Detail page ──
+  if (selectedAssignment) {
+    const assignmentSessions = sessions.filter((s) => s.assignmentId === selectedAssignment.id);
+    return (
+      <ReviewDetail
+        assignment={selectedAssignment}
+        assignmentSessions={assignmentSessions}
+        project={detailProject}
+        onBack={() => setSelectedAssignment(null)}
+        onReRecord={(rejected) => setReRecordSessions(rejected)}
+      />
+    );
+  }
 
-  const qaLabel: Record<string, string> = {
-    approved: "Approved",
-    rejected: "Rejected",
-    "in-review": "In review",
-    pending: "Pending",
-  };
-
+  // ── Empty state ──
   if (submitted.length === 0) {
     return (
       <div className="space-y-4">
@@ -1145,125 +1694,51 @@ function Reviews({
     );
   }
 
+  // ── List ──
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold text-ink sm:text-2xl">Reviews</h1>
 
-      {submitted.map((assignment) => {
-        const assignmentSessions = sessions.filter((s) => s.assignmentId === assignment.id);
-        const expanded = expandedIds.has(assignment.id);
+      <div className="space-y-3">
+        {submitted.map((a) => {
+          const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+          const rejectedCount = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
+          const approvedCount = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
+          const pendingCount = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+          const allApproved = approvedCount === assignmentSessions.length && assignmentSessions.length > 0;
 
-        // Group sessions by taskId
-        const taskMap = new Map<string, DCSession[]>();
-        assignmentSessions.forEach((s) => {
-          if (!s.taskId) return;
-          if (!taskMap.has(s.taskId)) taskMap.set(s.taskId, []);
-          taskMap.get(s.taskId)!.push(s);
-        });
-
-        const totalSessions = assignmentSessions.length;
-        const approvedCount = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
-        const rejectedCount = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
-        const inReviewCount = assignmentSessions.filter((s) => s.qaStatus === "in-review").length;
-
-        return (
-          <div key={assignment.id} className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
-            {/* Assignment header */}
+          return (
             <button
+              key={a.id}
               type="button"
-              onClick={() => toggle(assignment.id)}
-              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-slate-50"
+              onClick={() => setSelectedAssignment(a)}
+              className="flex w-full items-center justify-between gap-4 rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4 text-left transition hover:border-slate-300 hover:shadow-sm"
             >
               <div className="min-w-0">
-                {assignment.projectDialect && (
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{assignment.projectDialect}</p>
+                {a.projectDialect && (
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{a.projectDialect}</p>
                 )}
-                <p className="truncate text-sm font-semibold text-ink">{assignment.projectName}</p>
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  {approvedCount > 0 && (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">{approvedCount} approved</span>
+                <p className="truncate text-sm font-semibold text-ink">{a.projectName}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {allApproved && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">All approved ✓</span>
                   )}
                   {rejectedCount > 0 && (
                     <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">{rejectedCount} rejected</span>
                   )}
-                  {inReviewCount > 0 && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{inReviewCount} in review</span>
+                  {pendingCount > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{pendingCount} in review</span>
                   )}
-                  {totalSessions === approvedCount && totalSessions > 0 && (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">All approved ✓</span>
+                  {approvedCount > 0 && !allApproved && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">{approvedCount} approved</span>
                   )}
                 </div>
               </div>
-              <span className={["shrink-0 text-muted/40 text-sm transition-transform duration-200", expanded ? "rotate-180" : ""].join(" ")}>▾</span>
+              <span className="shrink-0 text-sm text-muted/50">›</span>
             </button>
-
-            {expanded && (
-              <div className="border-t border-slate-100">
-                {taskMap.size === 0 ? (
-                  <p className="px-5 py-4 text-sm text-muted">No sessions found for this project.</p>
-                ) : (
-                  Array.from(taskMap.entries()).map(([taskId, taskSessions]) => {
-                    const sorted = [...taskSessions].sort((a, b) => (a.promptIndex ?? 0) - (b.promptIndex ?? 0));
-                    const taskRejected = sorted.some((s) => s.qaStatus === "rejected");
-
-                    return (
-                      <div key={taskId} className="border-b border-slate-100 last:border-b-0">
-                        <div className="flex items-center justify-between gap-3 bg-slate-50/60 px-5 py-3">
-                          <p className="text-xs font-semibold text-ink">
-                            {sorted[0]?.promptText ? `Task` : "Task"}
-                          </p>
-                          {taskRejected && (
-                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Needs attention</span>
-                          )}
-                        </div>
-
-                        <div className="divide-y divide-slate-50">
-                          {sorted.map((s) => (
-                            <div key={s.id} className="px-5 py-3.5">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-xs font-medium text-muted">Prompt {(s.promptIndex ?? 0) + 1}</p>
-                                  {s.promptText && (
-                                    <p className="mt-0.5 text-sm text-ink line-clamp-2">{s.promptText}</p>
-                                  )}
-                                  {s.qaStatus === "rejected" && s.qaNote && (
-                                    <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
-                                      <p className="text-[11px] font-semibold uppercase tracking-widest text-rose-600">Rejection reason</p>
-                                      <p className="mt-0.5 text-sm text-rose-900">{s.qaNote}</p>
-                                    </div>
-                                  )}
-                                  {s.audioUrl && (
-                                    // eslint-disable-next-line jsx-a11y/media-has-caption
-                                    <audio controls src={s.audioUrl} className="mt-2 w-full rounded-xl" />
-                                  )}
-                                </div>
-                                <div className="shrink-0 flex flex-col items-end gap-2">
-                                  <span className={["rounded-full px-2.5 py-1 text-[10px] font-semibold", qaColor[s.qaStatus] ?? qaColor.pending].join(" ")}>
-                                    {qaLabel[s.qaStatus] ?? "Pending"}
-                                  </span>
-                                  {s.qaStatus === "rejected" && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onReRecord(assignment, s.taskId!, s.promptIndex!)}
-                                      className="rounded-full border border-rose-200 bg-white px-3 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-50"
-                                    >
-                                      Re-record →
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1355,6 +1830,7 @@ function Profile({
     firstName: speaker.firstName,
     lastName: speaker.lastName,
     dateOfBirth: speaker.dateOfBirth,
+    gender: speaker.gender,
     country: speaker.country,
     region: speaker.region,
     languages: speaker.languages,
@@ -1380,6 +1856,7 @@ function Profile({
       firstName: speaker.firstName,
       lastName: speaker.lastName,
       dateOfBirth: speaker.dateOfBirth,
+      gender: speaker.gender,
       country: speaker.country,
       region: speaker.region,
       languages: speaker.languages,
@@ -1404,6 +1881,10 @@ function Profile({
     }
     if (calcAge(form.dateOfBirth) < 18) {
       setError("You must be at least 18 years old to participate.");
+      return;
+    }
+    if (!form.gender) {
+      setError("Please select your gender.");
       return;
     }
     if (!form.country) {
@@ -1435,6 +1916,7 @@ function Profile({
         name: updatedName,
         dateOfBirth: form.dateOfBirth,
         age: String(calcAge(form.dateOfBirth)),
+        gender: form.gender,
         country: form.country,
         region: form.region.trim(),
         languages: form.languages,
@@ -1448,6 +1930,7 @@ function Profile({
         name: updatedName,
         dateOfBirth: form.dateOfBirth,
         age: String(calcAge(form.dateOfBirth)),
+        gender: form.gender,
         country: form.country,
         region: form.region.trim(),
         languages: form.languages,
@@ -1495,6 +1978,11 @@ function Profile({
 
           {/* Stat pills */}
           <div className="mt-4 flex flex-wrap gap-1.5">
+            {speaker.gender && (
+              <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink capitalize shadow-sm">
+                {speaker.gender.replace("_", " ")}
+              </span>
+            )}
             {speaker.age && (
               <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink shadow-sm">
                 {speaker.age} yrs
@@ -1527,6 +2015,10 @@ function Profile({
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <p className="text-xs font-medium text-muted">Age</p>
             <p className="text-sm font-medium text-ink">{speaker.age ? `${speaker.age} years old` : "—"}</p>
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Gender</p>
+            <p className="text-sm font-medium capitalize text-ink">{speaker.gender ? speaker.gender.replace("_", " ") : "—"}</p>
           </div>
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <p className="text-xs font-medium text-muted">Country</p>
@@ -1635,6 +2127,21 @@ function Profile({
                 Age: <span className="font-semibold text-ink">{calcAge(form.dateOfBirth)} years old</span>
               </p>
             )}
+          </label>
+          <label className="block">
+            <span className={labelCls}>Gender <span className="text-primary">*</span></span>
+            <select
+              className={fieldCls}
+              value={form.gender}
+              onChange={(e) => set("gender", e.target.value)}
+              required
+            >
+              <option value="">Select gender…</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other">Other</option>
+              <option value="prefer_not_to_say">Prefer not to say</option>
+            </select>
           </label>
         </SectionCard>
 
@@ -1975,12 +2482,7 @@ function SpeakerPortal({ user }: { user: User }) {
             <Reviews
               assignments={assignments}
               sessions={sessions}
-              onReRecord={(assignment, taskId, promptIndex) => {
-                setPendingReRecord({ taskId, promptIndex });
-                setActiveAssignment(assignment);
-                setActiveTask(null);
-                router.push("/speakers?section=projects");
-              }}
+              speaker={speaker}
             />
           )}
           {effectiveSection === "profile" && (
