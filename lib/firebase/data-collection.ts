@@ -612,6 +612,14 @@ export function subscribeToDCAssignmentsBySpeaker(
   return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapAssignment(d.data(), d.id))), onError);
 }
 
+export function subscribeToDCAssignments(
+  callback: (assignments: DCAssignment[]) => void,
+  onError?: (err: Error) => void,
+) {
+  const q = query(collection(db(), "dcAssignments"), orderBy("assignedAt", "desc"));
+  return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapAssignment(d.data(), d.id))), onError);
+}
+
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function submitDCSession(input: DCSessionInput): Promise<string> {

@@ -6,6 +6,7 @@ import type { User } from "firebase/auth";
 import {
   inviteAndAssignSpeaker,
   inviteDCSpeaker,
+  subscribeToDCAssignments,
   subscribeToDCAssignmentsByProject,
   subscribeToDCProjects,
   subscribeToDCSessions,
@@ -678,98 +679,149 @@ function SpeakersSection({ activeUser }: { activeUser: User }) {
 // ─── Sessions section ─────────────────────────────────────────────────────────
 
 function SessionsSection({ activeUser: _user }: { activeUser: User }) {
+  const [assignments, setAssignments] = useState<DCAssignment[]>([]);
+  const [projects, setProjects] = useState<DCProject[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<DCSession | null>(null);
-  const [filterProject, setFilterProject] = useState("");
-  const [filterQA, setFilterQA] = useState("");
+  const [selectedAssignment, setSelectedAssignment] = useState<DCAssignment | null>(null);
+  const [filterText, setFilterText] = useState("");
 
   useEffect(() => {
-    return subscribeToDCSessions((s) => { setSessions(s); setLoading(false); });
+    let loadedCount = 0;
+    const done = () => { if (++loadedCount >= 3) setLoading(false); };
+    const u1 = subscribeToDCAssignments((a) => { setAssignments(a); done(); });
+    const u2 = subscribeToDCProjects((p) => { setProjects(p); done(); });
+    const u3 = subscribeToDCSessions((s) => { setSessions(s); done(); });
+    return () => { u1(); u2(); u3(); };
   }, []);
 
-  const filtered = sessions.filter((s) => {
-    if (filterProject && !s.projectName.toLowerCase().includes(filterProject.toLowerCase())) return false;
-    if (filterQA && s.qaStatus !== filterQA) return false;
-    return true;
+  if (selectedAssignment) {
+    return (
+      <AssignmentDetail
+        assignment={selectedAssignment}
+        sessions={sessions.filter((s) => s.assignmentId === selectedAssignment.id)}
+        project={projects.find((p) => p.id === selectedAssignment.projectId) ?? null}
+        onBack={() => setSelectedAssignment(null)}
+      />
+    );
+  }
+
+  const filtered = assignments.filter((a) => {
+    if (!filterText) return true;
+    const q = filterText.toLowerCase();
+    return (
+      a.speakerName.toLowerCase().includes(q) ||
+      a.speakerEmail.toLowerCase().includes(q) ||
+      a.projectName.toLowerCase().includes(q)
+    );
   });
 
-  if (selected) {
-    return <SessionDetail session={selected} onBack={() => setSelected(null)} />;
-  }
+  const totalSubmitted = assignments.filter((a) => a.submittedForReview).length;
+  const totalInProgress = assignments.filter((a) => !a.submittedForReview).length;
 
   return (
     <div className="space-y-6">
-      <SectionHeader
-        title="Sessions"
-        description="All recorded sessions across every project and speaker."
-      />
+      <SectionHeader title="Sessions" description="Speaker assignments and recording progress, one entry per speaker per project." />
 
-      <div className="flex flex-wrap gap-3">
-        <input
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-primary"
-          placeholder="Filter by project…"
-          value={filterProject}
-          onChange={(e) => setFilterProject(e.target.value)}
-        />
-        <select
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-primary"
-          value={filterQA}
-          onChange={(e) => setFilterQA(e.target.value)}
-        >
-          <option value="">All QA statuses</option>
-          {["pending", "in-review", "approved", "rejected"].map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <MetricCard label="Total Assignments" value={String(assignments.length)} sub="Across all projects" />
+        <MetricCard label="In Progress" value={String(totalInProgress)} sub="Recording not yet submitted" />
+        <MetricCard label="Submitted" value={String(totalSubmitted)} sub="Submitted for QA review" />
       </div>
+
+      <input
+        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-primary"
+        placeholder="Search by speaker or project…"
+        value={filterText}
+        onChange={(e) => setFilterText(e.target.value)}
+      />
 
       {loading ? (
         <div className="flex justify-center py-10"><span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /></div>
       ) : filtered.length === 0 ? (
-        <EmptyState message="No sessions match the current filters." />
+        <EmptyState message="No assignments found." />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Session", "Speaker", "Project", "Duration", "Transcription", "QA", "Date", ""].map((h) => (
-                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filtered.map((s) => (
-                <tr key={s.id} className="group hover:bg-panelStrong/50">
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}…</td>
-                  <td className="px-4 py-3 text-ink">{s.speakerName || s.speakerId}</td>
-                  <td className="px-4 py-3 text-muted">{s.projectName}</td>
-                  <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
-                  <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
-                  <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
-                  <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => setSelected(s)}
-                      className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary opacity-0 hover:bg-primary/10 group-hover:opacity-100"
-                    >
-                      Review
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          {filtered.map((a) => {
+            const project = projects.find((p) => p.id === a.projectId);
+            const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+            const totalPrompts = project
+              ? project.tasks.reduce((sum, t) => sum + t.prompts.length, 0)
+              : 0;
+            const completedCount = assignmentSessions.length;
+            const pct = totalPrompts > 0 ? Math.min(100, Math.round((completedCount / totalPrompts) * 100)) : 0;
+
+            return (
+              <div key={a.id} className="rounded-[1.25rem] border border-slate-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted">{a.projectName}</p>
+                    <h3 className="font-semibold text-ink">{a.speakerName}</h3>
+                    <p className="text-xs text-muted">{a.speakerEmail}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {a.submittedForReview ? (
+                      <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-medium text-blue-800">
+                        Submitted for Review
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
+                        In Progress
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {totalPrompts > 0 && (
+                  <div className="mt-4">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <p className="text-xs text-muted">{completedCount} / {totalPrompts} prompts recorded</p>
+                      <p className="text-xs font-semibold text-ink">{pct}%</p>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4 flex items-center justify-between">
+                  <p className="text-xs text-muted">
+                    {assignmentSessions.length} recordings · Assigned {formatDate(a.assignedAt)}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAssignment(a)}
+                    className="rounded-full border border-slate-200 px-3.5 py-1.5 text-xs font-medium text-ink hover:bg-slate-50"
+                  >
+                    View →
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// ─── Session Detail ───────────────────────────────────────────────────────────
+// ─── Assignment Detail (Sessions) ─────────────────────────────────────────────
 
-function SessionDetail({ session, onBack }: { session: DCSession; onBack: () => void }) {
+function AssignmentDetail({
+  assignment, sessions, project, onBack,
+}: {
+  assignment: DCAssignment;
+  sessions: DCSession[];
+  project: DCProject | null;
+  onBack: () => void;
+}) {
+  const tasks = project?.tasks ?? [];
+  const totalPrompts = tasks.reduce((sum, t) => sum + t.prompts.length, 0);
+  const pct = totalPrompts > 0 ? Math.min(100, Math.round((sessions.length / totalPrompts) * 100)) : 0;
+
   return (
     <div className="space-y-6">
       <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-primary">
@@ -779,43 +831,38 @@ function SessionDetail({ session, onBack }: { session: DCSession; onBack: () => 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-mono text-muted">{session.id}</p>
-            <h2 className="mt-1 text-xl font-semibold text-ink">{session.speakerName || session.speakerId}</h2>
-            <p className="mt-0.5 text-sm text-muted">{session.projectName} · {formatDuration(session.duration)}</p>
+            <p className="text-xs text-muted">{assignment.projectName}</p>
+            <h2 className="mt-0.5 text-xl font-semibold text-ink">{assignment.speakerName}</h2>
+            <p className="text-sm text-muted">{assignment.speakerEmail}</p>
           </div>
-          <div className="flex gap-2">
-            <StatusBadge status={session.transcriptionStatus} />
-            <StatusBadge status={session.qaStatus} />
-          </div>
+          {assignment.submittedForReview ? (
+            <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-800">
+              Submitted for Review
+            </span>
+          ) : (
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+              In Progress
+            </span>
+          )}
         </div>
 
-        {session.audioUrl && (
+        {totalPrompts > 0 && (
           <div className="mt-5">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted">Audio</p>
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <audio controls src={session.audioUrl} className="w-full rounded-xl" />
-          </div>
-        )}
-
-        {session.transcriptText && (
-          <div className="mt-5">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted">Transcript</p>
-            <div className="rounded-xl border border-slate-200 bg-panelStrong px-4 py-3 text-sm leading-7 text-ink">
-              {session.transcriptText}
+            <div className="mb-1.5 flex items-center justify-between">
+              <p className="text-xs text-muted">{sessions.length} / {totalPrompts} prompts recorded</p>
+              <p className="text-xs font-semibold text-ink">{pct}%</p>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>
         )}
 
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-5 grid grid-cols-3 gap-3">
           {[
-            { label: "Gender", value: session.gender || "—" },
-            { label: "Age", value: session.age || "—" },
-            { label: "Dialect", value: session.dialect || "—" },
-            { label: "Region", value: session.region || "—" },
-            { label: "Sample rate", value: `${session.sampleRate} Hz` },
-            { label: "Bit depth", value: `${session.bitDepth}-bit` },
-            { label: "WER score", value: session.werScore != null ? `${session.werScore}%` : "—" },
-            { label: "QA score", value: session.qaScore != null ? `${session.qaScore}/10` : "—" },
+            { label: "Recordings", value: String(sessions.length) },
+            { label: "Tasks", value: String(tasks.length) },
+            { label: "Deadline", value: assignment.deadline || "—" },
           ].map((item) => (
             <div key={item.label} className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
               <p className="text-[11px] uppercase tracking-widest text-muted">{item.label}</p>
@@ -823,13 +870,69 @@ function SessionDetail({ session, onBack }: { session: DCSession; onBack: () => 
             </div>
           ))}
         </div>
-
-        {session.qaNote && (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            <strong>QA Note:</strong> {session.qaNote}
-          </div>
-        )}
       </div>
+
+      {tasks.length > 0 ? (
+        tasks.map((task, ti) => {
+          const taskSessions = sessions.filter((s) => s.taskId === task.id);
+          return (
+            <div key={task.id} className="rounded-[1.25rem] border border-slate-200 bg-white p-5">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                  {ti + 1}
+                </div>
+                <h3 className="font-semibold text-ink">{task.title}</h3>
+                <span className="ml-auto text-xs text-muted">{taskSessions.length}/{task.prompts.length} done</span>
+              </div>
+              <div className="space-y-3">
+                {task.prompts.map((prompt, pi) => {
+                  const s = taskSessions.find((sess) => sess.promptIndex === pi);
+                  return (
+                    <div
+                      key={pi}
+                      className={`rounded-xl border px-4 py-3 ${s ? "border-emerald-200 bg-emerald-50/40" : "border-slate-100 bg-panelStrong"}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2">
+                          <span className="mt-0.5 font-mono text-xs text-muted">P{pi + 1}</span>
+                          <p className="text-sm leading-relaxed text-ink">{prompt.text}</p>
+                        </div>
+                        {s && <StatusBadge status={s.qaStatus} />}
+                      </div>
+                      {s?.audioUrl && (
+                        <div className="mt-3">
+                          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                          <audio controls src={s.audioUrl} className="w-full rounded-xl" />
+                        </div>
+                      )}
+                      {!s && <p className="mt-2 text-xs italic text-muted">Not yet recorded</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })
+      ) : sessions.length === 0 ? (
+        <EmptyState message="No recordings yet." />
+      ) : (
+        <div className="space-y-3">
+          {sessions.map((s) => (
+            <div key={s.id} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm text-ink">{s.promptText || "—"}</p>
+                <StatusBadge status={s.qaStatus} />
+              </div>
+              {s.audioUrl && (
+                <div className="mt-3">
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <audio controls src={s.audioUrl} className="w-full rounded-xl" />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -938,91 +1041,263 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
 // ─── QA Review section ────────────────────────────────────────────────────────
 
 function QAReviewSection({ activeUser }: { activeUser: User }) {
+  const [assignments, setAssignments] = useState<DCAssignment[]>([]);
+  const [projects, setProjects] = useState<DCProject[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState<string | null>(null);
   const [noteInput, setNoteInput] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    return subscribeToDCSessions((s) => { setSessions(s); setLoading(false); });
+    let loadedCount = 0;
+    const done = () => { if (++loadedCount >= 3) setLoading(false); };
+    const u1 = subscribeToDCAssignments((a) => { setAssignments(a); done(); });
+    const u2 = subscribeToDCProjects((p) => { setProjects(p); done(); });
+    const u3 = subscribeToDCSessions((s) => { setSessions(s); done(); });
+    return () => { u1(); u2(); u3(); };
   }, []);
 
-  const pending = sessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
-  const approved = sessions.filter((s) => s.qaStatus === "approved");
-  const rejected = sessions.filter((s) => s.qaStatus === "rejected");
-  const approvalRate = sessions.length ? Math.round((approved.length / sessions.length) * 100) : 0;
+  const submitted = assignments.filter((a) => a.submittedForReview);
+  const allSessions = sessions;
+  const approved = allSessions.filter((s) => s.qaStatus === "approved");
+  const rejected = allSessions.filter((s) => s.qaStatus === "rejected");
+  const pending = allSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
+  const approvalRate = allSessions.length ? Math.round((approved.length / allSessions.length) * 100) : 0;
 
   async function handleQAAction(session: DCSession, status: DCQAStatus) {
     setUpdating(session.id);
     try {
-      await updateDCSessionQA(session.id, status, activeUser.email ?? "", undefined, noteInput[session.id]);
+      await updateDCSessionQA(session.id, status, activeUser.email ?? "", undefined, noteInput[session.id] ?? session.qaNote);
     } finally {
       setUpdating(null);
     }
   }
 
+  function toggleExpand(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   return (
     <div className="space-y-6">
-      <SectionHeader title="QA Review" description="Review, approve, and reject session recordings." />
+      <SectionHeader title="QA Review" description="Review submitted assignments and approve or reject each prompt recording." />
 
       <div className="grid gap-4 sm:grid-cols-4">
-        <MetricCard label="Pending QA" value={String(pending.length)} sub="Awaiting review" />
+        <MetricCard label="Awaiting QA" value={String(submitted.length)} sub="Submitted assignments" />
+        <MetricCard label="Pending" value={String(pending.length)} sub="Recordings to review" />
         <MetricCard label="Approved" value={String(approved.length)} sub="Passed QA" />
-        <MetricCard label="Rejected" value={String(rejected.length)} sub="Failed QA" />
-        <MetricCard label="Approval rate" value={`${approvalRate}%`} sub="Across all reviewed sessions" />
+        <MetricCard label="Approval rate" value={`${approvalRate}%`} sub={`${rejected.length} rejected`} />
       </div>
 
       {loading ? (
         <div className="flex justify-center py-10"><span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /></div>
-      ) : pending.length === 0 ? (
-        <EmptyState message="No sessions pending QA review." />
+      ) : submitted.length === 0 ? (
+        <EmptyState message="No assignments submitted for QA review yet." />
       ) : (
-        <div className="space-y-3">
-          {pending.map((s) => (
-            <div key={s.id} className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-xs text-muted">{s.id.slice(0, 12)}…</p>
-                  <p className="font-medium text-ink">{s.speakerName || s.speakerId} <span className="font-normal text-muted">· {s.projectName}</span></p>
-                  <p className="text-xs text-muted">{formatDuration(s.duration)} · {formatDate(s.createdAt)}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={s.qaStatus} />
-                  {s.werScore != null && <span className="text-xs text-muted">WER: {s.werScore}%</span>}
-                </div>
-              </div>
-              {s.audioUrl && (
-                <div className="mt-3">
-                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                  <audio controls src={s.audioUrl} className="w-full rounded-xl" />
-                </div>
-              )}
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <input
-                  className="flex-1 rounded-xl border border-slate-200 bg-panelStrong px-3 py-2 text-sm outline-none focus:border-primary"
-                  placeholder="QA note (optional)…"
-                  value={noteInput[s.id] ?? ""}
-                  onChange={(e) => setNoteInput((n) => ({ ...n, [s.id]: e.target.value }))}
-                />
+        <div className="space-y-4">
+          {submitted.map((a) => {
+            const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+            const project = projects.find((p) => p.id === a.projectId);
+            const tasks = project?.tasks ?? [];
+            const expanded = expandedIds.has(a.id);
+            const approvedForA = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
+            const pendingForA = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+            const rejectedForA = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
+
+            return (
+              <div key={a.id} className="overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white shadow-sm">
                 <button
                   type="button"
-                  disabled={updating === s.id}
-                  onClick={() => void handleQAAction(s, "approved")}
-                  className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  className="w-full p-5 text-left transition-colors hover:bg-panelStrong/50"
+                  onClick={() => toggleExpand(a.id)}
                 >
-                  {updating === s.id ? "…" : "Approve"}
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-muted">{a.projectName}</p>
+                      <h3 className="font-semibold text-ink">{a.speakerName}</h3>
+                      <p className="text-xs text-muted">{a.speakerEmail}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted">{approvedForA}/{assignmentSessions.length} approved</span>
+                      {rejectedForA > 0 && (
+                        <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700">
+                          {rejectedForA} rejected
+                        </span>
+                      )}
+                      {pendingForA > 0 && (
+                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
+                          {pendingForA} pending
+                        </span>
+                      )}
+                      {pendingForA === 0 && rejectedForA === 0 && (
+                        <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                          All approved
+                        </span>
+                      )}
+                      <span className="text-sm text-muted">{expanded ? "▲" : "▼"}</span>
+                    </div>
+                  </div>
                 </button>
-                <button
-                  type="button"
-                  disabled={updating === s.id}
-                  onClick={() => void handleQAAction(s, "rejected")}
-                  className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-                >
-                  {updating === s.id ? "…" : "Reject"}
-                </button>
+
+                {expanded && (
+                  <div className="space-y-5 border-t border-slate-100 p-5">
+                    {tasks.length > 0 ? (
+                      tasks.map((task, ti) => {
+                        const taskSessions = assignmentSessions.filter((s) => s.taskId === task.id);
+                        return (
+                          <div key={task.id}>
+                            <div className="mb-3 flex items-center gap-2">
+                              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+                                {ti + 1}
+                              </div>
+                              <p className="text-sm font-semibold text-ink">{task.title}</p>
+                              <span className="ml-auto text-xs text-muted">{taskSessions.length}/{task.prompts.length}</span>
+                            </div>
+                            <div className="space-y-3 pl-8">
+                              {task.prompts.map((prompt, pi) => {
+                                const s = taskSessions.find((sess) => sess.promptIndex === pi);
+                                if (!s) {
+                                  return (
+                                    <div key={pi} className="rounded-xl border border-dashed border-slate-200 px-4 py-3">
+                                      <div className="flex items-start gap-2">
+                                        <span className="font-mono text-xs text-muted">P{pi + 1}</span>
+                                        <p className="text-sm italic text-muted">{prompt.text}</p>
+                                      </div>
+                                      <p className="mt-1 text-xs text-muted">Not recorded</p>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div
+                                    key={pi}
+                                    className={`rounded-xl border p-4 ${
+                                      s.qaStatus === "approved"
+                                        ? "border-emerald-200 bg-emerald-50/40"
+                                        : s.qaStatus === "rejected"
+                                          ? "border-rose-200 bg-rose-50/40"
+                                          : "border-slate-200 bg-white"
+                                    }`}
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="flex items-start gap-2">
+                                        <span className="mt-0.5 font-mono text-xs text-muted">P{pi + 1}</span>
+                                        <p className="text-sm leading-relaxed text-ink">{prompt.text}</p>
+                                      </div>
+                                      <StatusBadge status={s.qaStatus} />
+                                    </div>
+
+                                    {s.audioUrl && (
+                                      <div className="mt-3">
+                                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                                        <audio controls src={s.audioUrl} className="w-full rounded-xl" />
+                                      </div>
+                                    )}
+
+                                    {s.qaStatus === "rejected" && s.qaNote && (
+                                      <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                                        <strong>Reason:</strong> {s.qaNote}
+                                      </div>
+                                    )}
+
+                                    {s.qaStatus !== "approved" && (
+                                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <input
+                                          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+                                          placeholder="Rejection reason (optional)…"
+                                          value={noteInput[s.id] ?? (s.qaNote || "")}
+                                          onChange={(e) => setNoteInput((n) => ({ ...n, [s.id]: e.target.value }))}
+                                        />
+                                        <button
+                                          type="button"
+                                          disabled={updating === s.id}
+                                          onClick={() => void handleQAAction(s, "approved")}
+                                          className="whitespace-nowrap rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                        >
+                                          {updating === s.id ? "…" : "Approve"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={updating === s.id}
+                                          onClick={() => void handleQAAction(s, "rejected")}
+                                          className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                                        >
+                                          {updating === s.id ? "…" : "Reject"}
+                                        </button>
+                                      </div>
+                                    )}
+
+                                    {s.qaStatus === "approved" && (
+                                      <p className="mt-2 text-xs font-medium text-emerald-700">✓ Approved</p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="space-y-3">
+                        {assignmentSessions.map((s) => (
+                          <div
+                            key={s.id}
+                            className={`rounded-xl border p-4 ${
+                              s.qaStatus === "approved"
+                                ? "border-emerald-200 bg-emerald-50/40"
+                                : s.qaStatus === "rejected"
+                                  ? "border-rose-200 bg-rose-50/40"
+                                  : "border-slate-200"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm text-ink">{s.promptText || "—"}</p>
+                              <StatusBadge status={s.qaStatus} />
+                            </div>
+                            {s.audioUrl && (
+                              <div className="mt-3">
+                                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                                <audio controls src={s.audioUrl} className="w-full rounded-xl" />
+                              </div>
+                            )}
+                            {s.qaStatus !== "approved" && (
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <input
+                                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary"
+                                  placeholder="Rejection reason (optional)…"
+                                  value={noteInput[s.id] ?? (s.qaNote || "")}
+                                  onChange={(e) => setNoteInput((n) => ({ ...n, [s.id]: e.target.value }))}
+                                />
+                                <button
+                                  type="button"
+                                  disabled={updating === s.id}
+                                  onClick={() => void handleQAAction(s, "approved")}
+                                  className="whitespace-nowrap rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  {updating === s.id ? "…" : "Approve"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={updating === s.id}
+                                  onClick={() => void handleQAAction(s, "rejected")}
+                                  className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                                >
+                                  {updating === s.id ? "…" : "Reject"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
