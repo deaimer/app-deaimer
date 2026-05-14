@@ -1928,7 +1928,7 @@ function Profile({
       const firstName = form.firstName.trim();
       const lastName = form.lastName.trim();
       const updatedName = `${firstName} ${lastName}`;
-      await updateDCSpeakerProfile(speaker.email, {
+      await updateDCSpeakerProfile({
         firstName,
         lastName,
         name: updatedName,

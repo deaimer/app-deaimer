@@ -506,13 +506,21 @@ export async function updateDCSpeakerStatus(email: string, status: DCSpeakerStat
 }
 
 export async function updateDCSpeakerProfile(
-  email: string,
   updates: Partial<Omit<DCSpeaker, "id" | "email" | "invitedByEmail" | "invitedByUid" | "createdAt" | "totalHours" | "projectsCount">>,
 ) {
-  await setDoc(doc(db(), "speakerAccess", email.trim().toLowerCase()), {
-    ...updates,
-    updatedAt: serverTimestamp(),
-  }, { merge: true });
+  const { auth } = getFirebaseClientServices();
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) throw new Error("Not signed in");
+
+  const res = await fetch("/api/speaker/update-profile", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(json.error ?? "Profile update failed");
+  }
 }
 
 // ─── Assignments ──────────────────────────────────────────────────────────────

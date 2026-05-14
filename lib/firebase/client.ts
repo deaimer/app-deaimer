@@ -72,7 +72,9 @@ function shouldFallbackToRedirect(error: unknown) {
 
   return (
     code === "auth/popup-blocked" ||
-    code === "auth/operation-not-supported-in-this-environment"
+    code === "auth/operation-not-supported-in-this-environment" ||
+    code === "auth/cancelled-popup-request" ||
+    code === "auth/popup-closed-by-user"
   );
 }
 
