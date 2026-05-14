@@ -2432,6 +2432,7 @@ function ConversationalProjectView({
   const prevStatusRef = useRef<string>("waiting");
   const everJoinedRef = useRef(false);
   const recordingStartedRef = useRef(false);
+  const keepAliveCtxRef = useRef<AudioContext | null>(null);
 
   const myEmail = user.email?.toLowerCase() ?? "";
   const isPrimary = assignment !== null;
@@ -2455,15 +2456,21 @@ function ConversationalProjectView({
   useEffect(() => { roomRef.current = room; }, [room]);
 
   // Presence tracking: keep our online flag live in Firestore.
-  // Fires when the user hides/shows the tab or loses/regains network.
+  // Also auto-pauses the session when this user loses their network connection.
   useEffect(() => {
     if (!room?.id || !iAmJoined) return;
     const rid = room.id;
     const uid = user.uid;
     const markOnline = () =>
       void updateConversationRoomParticipant(rid, uid, { online: true }).catch(() => {});
-    const markOffline = () =>
+    const markOffline = () => {
       void updateConversationRoomParticipant(rid, uid, { online: false }).catch(() => {});
+      // Auto-pause when this user loses network mid-recording
+      if (roomRef.current?.status === "recording") {
+        void updateConversationRoomStatus(rid, "paused").catch(() => {});
+      }
+    };
+    // visibilitychange: update presence but don't pause (screen-off keeps call alive via keep-alive ctx)
     const onVisibility = () => { if (document.hidden) markOffline(); else markOnline(); };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("online", markOnline);
@@ -2578,25 +2585,29 @@ function ConversationalProjectView({
     prevTaskIndexRef.current = room.taskIndex;
 
     const taskChanged = room.taskIndex !== prevTaskIndex && prevTaskIndex !== -1;
-    const startedRecording = room.status === "recording" && prevStatus !== "recording";
-    const stoppedRecording = room.status === "stopped" && prevStatus === "recording";
 
-    if (startedRecording || (taskChanged && room.status === "recording")) {
-      // Reset per-task local state
+    // Reset local recording state whenever the task advances
+    if (taskChanged) {
       if (localBlob?.url) URL.revokeObjectURL(localBlob.url);
       setLocalBlob(null);
       setElapsed(0);
       setWarnShown(false);
       setMyUploadStatus("idle");
       setUploadError(null);
-      // Only start if mic is already acquired; setupWebRTCAndMic() will start
-      // recording at its end if it finishes after the status has changed.
-      if (localStreamRef.current) {
-        startLocalRecording();
-      }
     }
 
-    if (stoppedRecording) {
+    const nowRecording = room.status === "recording" && prevStatus !== "recording" && prevStatus !== "paused";
+    const resumed = room.status === "recording" && prevStatus === "paused";
+    const paused = room.status === "paused" && prevStatus === "recording";
+    const stopped = room.status === "stopped" && prevStatus !== "stopped";
+
+    if (nowRecording && localStreamRef.current) {
+      startLocalRecording();
+    } else if (resumed) {
+      resumeLocalRecording();
+    } else if (paused) {
+      pauseLocalRecording();
+    } else if (stopped) {
       stopLocalRecording();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2644,13 +2655,26 @@ function ConversationalProjectView({
         }
       };
 
+      // Keep AudioContext alive when screen turns off (iOS/Android background)
+      try {
+        const kCtx = new AudioContext();
+        keepAliveCtxRef.current = kCtx;
+        const buf = kCtx.createBuffer(1, kCtx.sampleRate, kCtx.sampleRate);
+        const src = kCtx.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        src.connect(kCtx.destination);
+        src.start();
+      } catch { /* non-critical */ }
+
       // Called when ICE connection is established (most reliable signal on mobile)
       const onConnected = () => {
         if (recordingStartedRef.current) return;
         recordingStartedRef.current = true;
         setLocalConnecting(false);
+        // Signal call is live — do NOT auto-start recording; either party will do that manually
         if (isPrimary) {
-          void updateConversationRoomStatus(roomId, "recording", { taskIndex: currentTaskIndex });
+          void updateConversationRoomStatus(roomId, "connected");
         }
       };
 
@@ -2818,6 +2842,34 @@ function ConversationalProjectView({
     try { mediaRecorderRef.current?.stop(); } catch { /* already stopped */ }
   }
 
+  function pauseLocalRecording() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (mediaRecorderRef.current?.state === "recording") {
+      try { mediaRecorderRef.current.pause(); } catch { /* best-effort */ }
+    }
+  }
+
+  function resumeLocalRecording() {
+    if (mediaRecorderRef.current?.state === "paused") {
+      try { mediaRecorderRef.current.resume(); } catch { /* best-effort */ }
+    }
+    if (!timerRef.current) {
+      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+    }
+  }
+
+  async function handleStartRecording() {
+    await updateConversationRoomStatus(roomId, "recording");
+  }
+
+  async function handlePauseRecording() {
+    await updateConversationRoomStatus(roomId, "paused");
+  }
+
+  async function handleResumeRecording() {
+    await updateConversationRoomStatus(roomId, "recording");
+  }
+
   async function handlePrimaryStart() {
     setLocalConnecting(true);
     setWebrtcError(null);
@@ -2883,10 +2935,10 @@ function ConversationalProjectView({
     } else {
       const nextIdx = currentTaskIndex + 1;
       const resetParticipants = room.participants.map((p) => ({ ...p, uploadStatus: "idle" as const }));
-      // WebRTC connection stays alive between tasks — no signaling reset needed.
+      // WebRTC stays alive between tasks; return to "connected" so either party can start the next take
       await updateConversationRoomFields(roomId, {
         taskIndex: nextIdx,
-        status: "recording",
+        status: "connected",
         participants: resetParticipants,
       });
     }
@@ -2917,6 +2969,7 @@ function ConversationalProjectView({
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       pcRef.current?.close();
+      keepAliveCtxRef.current?.close().catch(() => {});
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -3121,56 +3174,58 @@ function ConversationalProjectView({
   }
 
   // ── Recording / stopped phase ─────────────────────────────────────────────
+  const isConnected = roomStatus === "connected";
   const isRecording = roomStatus === "recording";
+  const isPaused = roomStatus === "paused";
   const isStopped = roomStatus === "stopped";
-  const canStop = isPrimary && isRecording && elapsed >= minSec;
+  const isActiveSession = isConnected || isRecording || isPaused;
+  const canStop = isPrimary && (isRecording || isPaused) && elapsed >= minSec;
   const timerColor = elapsed >= maxSec * 0.9 ? "text-rose-500" : elapsed >= maxSec * 0.7 ? "text-amber-500" : "text-ink";
 
+  // Tiny participant pill component
+  const ParticipantPills = () => (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {room.participants.map((p) => (
+        <span key={p.uid} className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5">
+          <span className={[
+            "h-1.5 w-1.5 rounded-full shrink-0",
+            p.online ? "bg-emerald-400" : "bg-amber-400",
+          ].join(" ")} />
+          <span className="text-[11px] font-medium text-ink">
+            {(p.name?.split(" ")[0] ?? p.email.split("@")[0])}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-medium text-muted">Task {currentTaskIndex + 1} of {totalTasks}</p>
-          <h1 className="mt-0.5 text-xl font-semibold text-ink">{currentTask?.title ?? "Recording"}</h1>
+          <h1 className="mt-0.5 text-lg font-semibold text-ink">{currentTask?.title ?? "Recording"}</h1>
         </div>
         <span className={[
-          "shrink-0 rounded-full px-3 py-1 text-xs font-semibold",
-          isRecording ? "bg-rose-100 text-rose-700 animate-pulse" : "bg-amber-100 text-amber-700",
+          "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+          isRecording ? "bg-rose-100 text-rose-700 animate-pulse"
+            : isPaused ? "bg-amber-100 text-amber-700"
+            : isConnected ? "bg-emerald-100 text-emerald-700"
+            : "bg-slate-100 text-slate-600",
         ].join(" ")}>
-          {isRecording ? "● Recording" : "■ Stopped"}
+          {isRecording ? "● REC" : isPaused ? "⏸ Paused" : isConnected ? "● Live" : "■ Stopped"}
         </span>
       </div>
 
-      {/* Participant upload status (stopped phase) */}
-      {isStopped && (
-        <div className="flex flex-wrap gap-2">
-          {room.participants.map((p) => (
-            <div key={p.uid} className={[
-              "flex items-center gap-1.5 rounded-full border px-3 py-1",
-              p.uploadStatus === "done" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white",
-            ].join(" ")}>
-              <span className={["h-2 w-2 rounded-full shrink-0", p.uploadStatus === "done" ? "bg-emerald-400" : p.uploadStatus === "uploading" ? "bg-amber-400 animate-pulse" : "bg-slate-300"].join(" ")} />
-              <span className="text-xs font-medium text-ink">{p.name?.split(" ")[0] ?? p.email}</span>
-              <span className="text-[10px] text-muted">{p.uploadStatus === "done" ? "✓ uploaded" : p.uploadStatus === "uploading" ? "uploading…" : "pending"}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Participants row (always visible during active session) */}
+      {isActiveSession && <ParticipantPills />}
 
       {/* Prompt */}
-      {prompt && (
+      {prompt && isActiveSession && (
         <div className="rounded-[1.25rem] border border-blue-100 bg-blue-50 p-4">
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">Prompt</p>
-          <p className="text-sm leading-7 text-ink">{prompt.text}</p>
-          <p className="mt-2 text-[11px] text-muted">Min {minSec}s · Max {maxSec}s</p>
-        </div>
-      )}
-
-      {/* 1-minute warning */}
-      {warnShown && isRecording && (
-        <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-          ⚠ Less than 1 minute remaining — start wrapping up naturally.
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-primary">Prompt</p>
+          <p className="text-sm leading-6 text-ink">{prompt.text}</p>
         </div>
       )}
 
@@ -3178,135 +3233,228 @@ function ConversationalProjectView({
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
-      {/* Recorder UI */}
+      {/* ── Connected: ready to record ── */}
+      {isConnected && (
+        <div className="flex flex-col items-center gap-4 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-8">
+          <div className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <span className="text-xs font-medium text-emerald-700">Call connected</span>
+          </div>
+          <p className="text-[11px] text-muted">Min {minSec}s · Max {formatDuration(maxSec)}</p>
+          {webrtcError && <p className="text-center text-xs text-rose-600">{webrtcError}</p>}
+          <button
+            type="button"
+            onClick={() => void handleStartRecording()}
+            className="flex items-center gap-2 rounded-full bg-rose-600 px-8 py-3.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(220,38,38,0.35)] hover:bg-rose-700 active:scale-95 transition-transform"
+          >
+            <span className="h-3 w-3 rounded-full bg-white/80" />
+            Start Recording
+          </button>
+        </div>
+      )}
+
+      {/* ── Recording ── */}
       {isRecording && (
-        <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
-          <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
-            {formatDuration(elapsed)}
-          </p>
-          <div className="flex h-10 items-end gap-[2px]" aria-hidden="true">
+        <div className="flex flex-col items-center gap-4 rounded-[1.75rem] border border-rose-100 bg-white px-4 py-8">
+          {/* Timer + duration info */}
+          <div className="flex flex-col items-center gap-1">
+            <p className={["font-mono text-5xl font-light tracking-tight", timerColor].join(" ")}>
+              {formatDuration(elapsed)}
+            </p>
+            <p className="text-[10px] text-muted">min {minSec}s · max {formatDuration(maxSec)}</p>
+          </div>
+
+          {/* Visualizer */}
+          <div className="flex h-8 items-end gap-[2px]" aria-hidden="true">
             {levelBars.map((h, i) => (
-              <div key={i} className="w-[3px] rounded-full bg-primary transition-all duration-75" style={{ height: `${Math.max(4, h)}%` }} />
+              <div key={i} className="w-[3px] rounded-full bg-rose-400 transition-all duration-75" style={{ height: `${Math.max(4, h)}%` }} />
             ))}
           </div>
-          <p className="animate-pulse text-xs text-muted">Recording… speak naturally</p>
-          {isPrimary ? (
+
+          {/* 1-min warning */}
+          {warnShown && (
+            <p className="text-[11px] font-medium text-amber-600">⚠ Less than 1 min left — wrap up</p>
+          )}
+
+          {/* Controls */}
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => void handlePrimaryStop()}
-              disabled={!canStop}
-              className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-600 text-xl text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 disabled:opacity-40 active:scale-95"
+              onClick={() => void handlePauseRecording()}
+              className="flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-lg text-slate-600 hover:bg-slate-50 active:scale-95 transition-transform"
+              title="Pause"
             >
-              ⏹
+              ⏸
             </button>
-          ) : (
-            <div className="text-xs text-muted">Recording in progress — host will stop when done</div>
-          )}
-          {!canStop && isPrimary && (
-            <p className="text-xs text-muted">Minimum {minSec}s · {Math.max(0, minSec - elapsed)}s remaining before you can stop</p>
-          )}
-        </div>
-      )}
-
-      {/* Connecting spinner (waiting for WebRTC while room is recording) */}
-      {isRecording && localConnecting && (
-        <div className="flex items-center justify-center gap-2 rounded-[1rem] border border-slate-200 bg-white px-4 py-4">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
-          <span className="text-sm text-muted">Setting up audio call…</span>
-        </div>
-      )}
-      {webrtcError && (
-        <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{webrtcError}</div>
-      )}
-
-      {/* Stopped: playback + upload */}
-      {isStopped && localBlob && (
-        <div className="space-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-ink">Your recording ({formatDuration(localBlob.duration)})</p>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio controls src={localBlob.url} className="w-full rounded-xl" />
-          {myUploadStatus === "idle" && (
-            <button
-              type="button"
-              onClick={() => void handleUpload()}
-              className="w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong"
-            >
-              Upload recording →
-            </button>
-          )}
-          {myUploadStatus === "uploading" && (
-            <div className="flex items-center justify-center gap-2 py-1">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
-              <span className="text-sm text-muted">Uploading…</span>
-            </div>
-          )}
-          {myUploadStatus === "done" && (
-            <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2">
-              <span className="text-emerald-500">✓</span>
-              <span className="text-sm font-semibold text-emerald-900">Uploaded successfully</span>
-            </div>
-          )}
-          {myUploadStatus === "error" && uploadError && (
-            <div className="space-y-2">
-              <p className="text-sm text-rose-600">{uploadError}</p>
+            {isPrimary && (
               <button
                 type="button"
-                onClick={() => void handleUpload()}
-                className="w-full rounded-full border border-rose-200 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                onClick={() => void handlePrimaryStop()}
+                disabled={!canStop}
+                className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-600 text-xl text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 disabled:opacity-40 active:scale-95 transition-transform"
+                title={canStop ? "Stop recording" : `Min ${minSec}s — ${Math.max(0, minSec - elapsed)}s left`}
               >
-                Retry upload
+                ⏹
               </button>
+            )}
+          </div>
+          {!canStop && isPrimary && (
+            <p className="text-[10px] text-muted">{Math.max(0, minSec - elapsed)}s until you can stop</p>
+          )}
+          {!isPrimary && (
+            <p className="text-[10px] text-muted">Host controls when to stop</p>
+          )}
+        </div>
+      )}
+
+      {/* ── Paused ── */}
+      {isPaused && (
+        <div className="flex flex-col items-center gap-4 rounded-[1.75rem] border border-amber-100 bg-white px-4 py-8">
+          <div className="flex flex-col items-center gap-1">
+            <p className="font-mono text-5xl font-light tracking-tight text-amber-500">
+              {formatDuration(elapsed)}
+            </p>
+            <p className="text-[10px] text-muted">paused · min {minSec}s · max {formatDuration(maxSec)}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void handleResumeRecording()}
+              className="flex items-center gap-2 rounded-full bg-primary px-7 py-3 text-sm font-semibold text-white hover:bg-primaryStrong active:scale-95 transition-transform"
+            >
+              ▶ Resume
+            </button>
+            {isPrimary && canStop && (
+              <button
+                type="button"
+                onClick={() => void handlePrimaryStop()}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-rose-200 text-rose-600 hover:bg-rose-50 active:scale-95 transition-transform"
+                title="Stop recording"
+              >
+                ⏹
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Connection/error banner (shown across all active states) */}
+      {isActiveSession && localConnecting && (
+        <div className="flex items-center justify-center gap-2 rounded-[1rem] border border-slate-200 bg-white px-4 py-3">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+          <span className="text-xs text-muted">Setting up audio…</span>
+        </div>
+      )}
+      {webrtcError && !isConnected && (
+        <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{webrtcError}</div>
+      )}
+
+      {/* ── Stopped: upload phase ── */}
+      {isStopped && (
+        <>
+          {/* Upload status pills */}
+          <div className="flex flex-wrap gap-2">
+            {room.participants.map((p) => (
+              <div key={p.uid} className={[
+                "flex items-center gap-1.5 rounded-full border px-3 py-1",
+                p.uploadStatus === "done" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white",
+              ].join(" ")}>
+                <span className={["h-2 w-2 rounded-full shrink-0", p.uploadStatus === "done" ? "bg-emerald-400" : p.uploadStatus === "uploading" ? "bg-amber-400 animate-pulse" : "bg-slate-300"].join(" ")} />
+                <span className="text-xs font-medium text-ink">{p.name?.split(" ")[0] ?? p.email}</span>
+                <span className="text-[10px] text-muted">{p.uploadStatus === "done" ? "✓" : p.uploadStatus === "uploading" ? "uploading…" : "pending"}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Prompt reminder */}
+          {prompt && (
+            <div className="rounded-[1.25rem] border border-blue-100 bg-blue-50 p-4">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-primary">Prompt</p>
+              <p className="text-sm leading-6 text-ink">{prompt.text}</p>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Stopped with no local blob (joined late or mic failed) */}
-      {isStopped && !localBlob && myUploadStatus === "idle" && (
-        <div className="rounded-[1.25rem] border border-amber-200 bg-amber-50 px-5 py-4">
-          <p className="text-sm text-amber-800">No recording captured on your device.</p>
-          <button
-            type="button"
-            onClick={() => {
-              setMyUploadStatus("done");
-              void updateConversationRoomParticipant(roomId, user.uid, { uploadStatus: "done" });
-            }}
-            className="mt-3 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
-          >
-            Skip and continue
-          </button>
-        </div>
-      )}
+          {/* Playback + upload */}
+          {localBlob ? (
+            <div className="space-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-4">
+              <p className="text-sm font-semibold text-ink">Your recording ({formatDuration(localBlob.duration)})</p>
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+              <audio controls src={localBlob.url} className="w-full rounded-xl" />
+              {myUploadStatus === "idle" && (
+                <button type="button" onClick={() => void handleUpload()}
+                  className="w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
+                  Upload recording →
+                </button>
+              )}
+              {myUploadStatus === "uploading" && (
+                <div className="flex items-center justify-center gap-2 py-1">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+                  <span className="text-sm text-muted">Uploading…</span>
+                </div>
+              )}
+              {myUploadStatus === "done" && (
+                <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2">
+                  <span className="text-emerald-500">✓</span>
+                  <span className="text-sm font-semibold text-emerald-900">Uploaded</span>
+                </div>
+              )}
+              {myUploadStatus === "error" && uploadError && (
+                <div className="space-y-2">
+                  <p className="text-sm text-rose-600">{uploadError}</p>
+                  <button type="button" onClick={() => void handleUpload()}
+                    className="w-full rounded-full border border-rose-200 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50">
+                    Retry upload
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : myUploadStatus === "idle" ? (
+            <div className="rounded-[1.25rem] border border-amber-200 bg-amber-50 px-5 py-4">
+              <p className="text-sm text-amber-800">No recording captured on your device.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setMyUploadStatus("done");
+                  void updateConversationRoomParticipant(roomId, user.uid, { uploadStatus: "done" });
+                }}
+                className="mt-3 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
+              >
+                Skip and continue
+              </button>
+            </div>
+          ) : null}
 
-      {/* Next task / submit (primary only, all must upload first) */}
-      {isStopped && isPrimary && (
-        <div className="space-y-2">
-          {!allUploaded && (
-            <p className="text-center text-xs text-muted">Waiting for all speakers to finish uploading…</p>
+          {/* Next task / submit (primary only) */}
+          {isPrimary && (
+            <div className="space-y-2">
+              {!allUploaded && (
+                <p className="text-center text-xs text-muted">Waiting for all speakers to upload…</p>
+              )}
+              <button
+                type="button"
+                disabled={!allUploaded || submitting}
+                onClick={() => void handleNextTask()}
+                className="w-full rounded-full bg-primary py-3.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-40"
+              >
+                {submitting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    Submitting…
+                  </span>
+                ) : isLastTask ? "Submit for review →" : "Next task →"}
+              </button>
+              {submitError && <p className="text-center text-sm text-rose-600">{submitError}</p>}
+            </div>
           )}
-          <button
-            type="button"
-            disabled={!allUploaded || submitting}
-            onClick={() => void handleNextTask()}
-            className="w-full rounded-full bg-primary py-3.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-40"
-          >
-            {submitting ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                Submitting…
-              </span>
-            ) : isLastTask ? "Submit for review →" : `Next task →`}
-          </button>
-          {submitError && <p className="text-center text-sm text-rose-600">{submitError}</p>}
-        </div>
-      )}
 
-      {/* Secondary waiting for next task */}
-      {isStopped && !isPrimary && myUploadStatus === "done" && (
-        <div className="flex items-center justify-center gap-3 rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4">
-          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
-          <span className="text-sm text-muted">Waiting for the host to advance…</span>
-        </div>
+          {/* Secondary: waiting for host to advance */}
+          {!isPrimary && myUploadStatus === "done" && (
+            <div className="flex items-center justify-center gap-3 rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4">
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+              <span className="text-sm text-muted">Waiting for the host to advance…</span>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

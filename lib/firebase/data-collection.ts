@@ -800,7 +800,7 @@ export async function updateDCSessionTranscription(
 
 // ─── Conversational rooms ─────────────────────────────────────────────────────
 
-export type DCConvStatus = "waiting" | "recording" | "stopped" | "done";
+export type DCConvStatus = "waiting" | "connected" | "recording" | "paused" | "stopped" | "done";
 
 export interface DCConvParticipant {
   uid: string;
