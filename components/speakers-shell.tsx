@@ -1881,10 +1881,12 @@ function Profile({
   speaker,
   onSaved,
   isOnboarding,
+  joiningRoomId,
 }: {
   speaker: DCSpeaker;
   onSaved: (s: DCSpeaker) => void;
   isOnboarding: boolean;
+  joiningRoomId?: string;
 }) {
   const [editing, setEditing] = useState(isOnboarding);
   const [form, setForm] = useState({
@@ -2132,13 +2134,30 @@ function Profile({
         </div>
       )}
 
+      {/* Room-join banner (shown when arriving via invite link) */}
+      {isOnboarding && joiningRoomId && (
+        <div className="flex items-start gap-3 rounded-[1.25rem] border border-amber-200 bg-amber-50 px-4 py-3.5">
+          <span className="mt-0.5 shrink-0 text-base">🎙️</span>
+          <div>
+            <p className="text-sm font-semibold text-amber-900">You&apos;ve been invited to a recording session</p>
+            <p className="mt-0.5 text-xs leading-5 text-amber-700">
+              Complete your speaker profile below and you&apos;ll be taken straight into the session.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       {isOnboarding ? (
         <div className="overflow-hidden rounded-[1.75rem] border border-primary/10 bg-gradient-to-br from-primary/[0.08] via-primary/[0.04] to-transparent px-5 pb-6 pt-5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">Speaker Portal</p>
-          <h1 className="mt-2 text-2xl font-semibold text-ink">Set up your profile</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-ink">
+            {joiningRoomId ? "One quick step to join" : "Set up your profile"}
+          </h1>
           <p className="mt-1.5 text-sm leading-6 text-muted">
-            Your details are embedded in every recording — fill these in correctly.
+            {joiningRoomId
+              ? "Your details are embedded in every recording. Fill these in accurately — it only takes a minute."
+              : "Your details are embedded in every recording — fill these in correctly."}
           </p>
         </div>
       ) : (
@@ -2300,7 +2319,7 @@ function Profile({
             disabled={saving}
             className="w-full rounded-full bg-primary py-3.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(43,133,240,0.3)] hover:bg-primaryStrong disabled:opacity-60 active:scale-[0.98]"
           >
-            {saving ? "Saving…" : isOnboarding ? "Complete Profile →" : "Save Changes"}
+            {saving ? "Saving…" : isOnboarding ? (joiningRoomId ? "Complete Profile & Join Session →" : "Complete Profile →") : "Save Changes"}
           </button>
         </div>
       </form>
@@ -2458,6 +2477,15 @@ function ConversationalProjectView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.id, isPrimary, iAmJoined]);
 
+  // Secondary: set up WebRTC as soon as the offer appears in the room doc.
+  // This fires while status is still "waiting" (before primary's PC connects),
+  // so we can't rely on the status-change effect for this.
+  useEffect(() => {
+    if (isPrimary || !room?.offer || offerHandledRef.current || localStreamRef.current !== null) return;
+    void setupWebRTCAndMic();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.offer]);
+
   // React to room status / taskIndex changes
   useEffect(() => {
     if (!room) return;
@@ -2465,11 +2493,6 @@ function ConversationalProjectView({
     const prevTaskIndex = prevTaskIndexRef.current;
     prevStatusRef.current = room.status;
     prevTaskIndexRef.current = room.taskIndex;
-
-    // Secondary: set up WebRTC when offer appears (primary has clicked Start)
-    if (!isPrimary && room.offer && !offerHandledRef.current && localStreamRef.current === null) {
-      void setupWebRTCAndMic();
-    }
 
     const taskChanged = room.taskIndex !== prevTaskIndex && prevTaskIndex !== -1;
     const startedRecording = room.status === "recording" && prevStatus !== "recording";
@@ -2483,7 +2506,8 @@ function ConversationalProjectView({
       setWarnShown(false);
       setMyUploadStatus("idle");
       setUploadError(null);
-      // Start recording if we have a mic stream
+      // Only start if mic is already acquired; setupWebRTCAndMic() will start
+      // recording at its end if it finishes after the status has changed.
       if (localStreamRef.current) {
         startLocalRecording();
       }
@@ -2562,6 +2586,12 @@ function ConversationalProjectView({
 
       // Process any signaling that arrived before PC was ready
       if (roomRef.current) void processSignaling(roomRef.current);
+
+      // Race-condition guard: if status is already "recording" by the time mic
+      // setup finishes (primary connected quickly), start recording immediately.
+      if (roomRef.current?.status === "recording" && localStreamRef.current) {
+        startLocalRecording();
+      }
     } catch (e) {
       const name = (e as { name?: string }).name;
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
@@ -2748,18 +2778,24 @@ function ConversationalProjectView({
     } else {
       const nextIdx = currentTaskIndex + 1;
       const resetParticipants = room.participants.map((p) => ({ ...p, uploadStatus: "idle" as const }));
-      // Reset signaling refs for new P2P state
-      answerHandledRef.current = false;
-      offerHandledRef.current = true; // keep true so secondary doesn't re-answer old offer
-      processedIcePrimaryRef.current.clear();
-      processedIceSecondaryRef.current.clear();
-      pendingIceRef.current = [];
+      // WebRTC connection stays alive between tasks — no signaling reset needed.
       await updateConversationRoomFields(roomId, {
         taskIndex: nextIdx,
         status: "recording",
         participants: resetParticipants,
       });
     }
+  }
+
+  async function handleRemoveParticipant(uid: string) {
+    if (!room || !isPrimary) return;
+    const removed = room.participants.find((p) => p.uid === uid);
+    await updateConversationRoomFields(roomId, {
+      participants: room.participants.filter((p) => p.uid !== uid),
+      invitedEmails: removed
+        ? room.invitedEmails.filter((e) => e !== removed.email)
+        : room.invitedEmails,
+    });
   }
 
   async function copyLink() {
@@ -2863,6 +2899,16 @@ function ConversationalProjectView({
                     <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Host</span>
                   )}
                   <span className={["h-2 w-2 rounded-full", p.online ? "bg-emerald-400" : "bg-slate-300"].join(" ")} />
+                  {isPrimary && p.role !== "primary" && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveParticipant(p.uid)}
+                      title="Remove speaker"
+                      className="flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition"
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -3393,13 +3439,20 @@ function SpeakerPortal({ user }: { user: User }) {
           )}
           {effectiveSection === "profile" && (
             <Profile
-            speaker={speakerForDisplay}
-            onSaved={(s) => {
-              setSpeaker(s);
-              if (!profileComplete) navigateTo("dashboard");
-            }}
-            isOnboarding={!profileComplete}
-          />
+              speaker={speakerForDisplay}
+              onSaved={(s) => {
+                setSpeaker(s);
+                if (!profileComplete) {
+                  if (roomIdParam) {
+                    router.push(`/speakers?section=projects&roomId=${roomIdParam}`);
+                  } else {
+                    navigateTo("dashboard");
+                  }
+                }
+              }}
+              isOnboarding={!profileComplete}
+              joiningRoomId={roomIdParam ?? undefined}
+            />
           )}
           {effectiveSection === "guidelines" && <Guidelines />}
         </div>
