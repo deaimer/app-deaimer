@@ -718,7 +718,7 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
     return (
       <AssignmentDetail
         assignment={selectedAssignment}
-        sessions={sessions.filter((s) => s.assignmentId === selectedAssignment.id)}
+        sessions={sessions.filter((s) => s.assignmentId === selectedAssignment.id && Boolean(s.audioUrl))}
         project={projects.find((p) => p.id === selectedAssignment.projectId) ?? null}
         speaker={speakers.find((s) => s.email === selectedAssignment.speakerEmail) ?? null}
         onBack={() => setSelectedAssignment(null)}
@@ -774,7 +774,7 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
               {filtered.map((a) => {
                 const project = projects.find((p) => p.id === a.projectId);
                 const sp = speakers.find((s) => s.email === a.speakerEmail);
-                const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+                const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id && Boolean(s.audioUrl));
                 const totalPrompts = project
                   ? project.tasks.reduce((sum, t) => sum + t.prompts.length, 0)
                   : 0;
@@ -839,8 +839,16 @@ function AssignmentDetail({
   onBack: () => void;
 }) {
   const tasks = project?.tasks ?? [];
+  // Filter out phantom sessions (no audioUrl or promptIndex outside task's range)
+  const validSessions = sessions.filter((s) => {
+    if (!s.audioUrl) return false;
+    if (tasks.length === 0) return true;
+    if (!s.taskId || s.promptIndex == null) return false;
+    const task = tasks.find((t) => t.id === s.taskId);
+    return task != null && s.promptIndex >= 0 && s.promptIndex < task.prompts.length;
+  });
   const totalPrompts = tasks.reduce((sum, t) => sum + t.prompts.length, 0);
-  const pct = totalPrompts > 0 ? Math.min(100, Math.round((sessions.length / totalPrompts) * 100)) : 0;
+  const pct = totalPrompts > 0 ? Math.min(100, Math.round((validSessions.length / totalPrompts) * 100)) : 0;
 
   const profileFields = [
     { label: "Gender", value: speaker?.gender || "—" },
@@ -1097,7 +1105,7 @@ function QAReviewSection({ activeUser }: { activeUser: User }) {
   }, []);
 
   const submitted = assignments.filter((a) => a.submittedForReview);
-  const allSessions = sessions;
+  const allSessions = sessions.filter((s) => Boolean(s.audioUrl));
   const approved = allSessions.filter((s) => s.qaStatus === "approved");
   const rejected = allSessions.filter((s) => s.qaStatus === "rejected");
   const pending = allSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
@@ -1138,7 +1146,7 @@ function QAReviewSection({ activeUser }: { activeUser: User }) {
       ) : (
         <div className="space-y-4">
           {submitted.map((a) => {
-            const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+            const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id && Boolean(s.audioUrl));
             const project = projects.find((p) => p.id === a.projectId);
             const tasks = project?.tasks ?? [];
             const expanded = expandedIds.has(a.id);

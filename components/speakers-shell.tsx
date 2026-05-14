@@ -478,7 +478,7 @@ function ProjectView({
   function submittedSetForTask(taskId: string): Set<number> {
     return new Set(
       sessions
-        .filter((s) => s.taskId === taskId && s.promptIndex != null)
+        .filter((s) => s.taskId === taskId && s.promptIndex != null && Boolean(s.audioUrl))
         .map((s) => s.promptIndex!)
     );
   }
@@ -731,7 +731,7 @@ function TaskView({
 
   const submittedSet = new Set(
     sessions
-      .filter((s) => s.taskId === task.id && s.promptIndex != null)
+      .filter((s) => s.taskId === task.id && s.promptIndex != null && Boolean(s.audioUrl))
       .map((s) => s.promptIndex!)
   );
 
@@ -758,7 +758,7 @@ function TaskView({
   const canGoNext = submittedSet.has(promptIdx) || blobs.has(promptIdx);
   const canGoPrev = promptIdx > 0 || taskIndex > 0;
   const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
-  const submittedSession = sessions.find((s) => s.taskId === task.id && s.promptIndex === promptIdx) ?? null;
+  const submittedSession = sessions.find((s) => s.taskId === task.id && s.promptIndex === promptIdx && Boolean(s.audioUrl)) ?? null;
   // Lock recording once submitted for review, except for rejected prompts
   const isRecordingAllowed = !assignment.submittedForReview || submittedSession?.qaStatus === "rejected";
 
@@ -1488,24 +1488,31 @@ function ReviewDetail({
   onReRecord: (rejected: DCSession[]) => void;
 }) {
   const tasks = project?.tasks ?? [];
-  const rejected = assignmentSessions.filter((s) => s.qaStatus === "rejected");
-  const approved = assignmentSessions.filter((s) => s.qaStatus === "approved");
-  const inReview = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
 
-  // Build ordered list using task order from project
+  // Only count sessions that have a real audio recording and match the project's current task/prompt structure
+  const validSessions = assignmentSessions.filter((s) => {
+    if (!s.audioUrl) return false; // phantom/aborted session
+    if (project === null) return false; // project not loaded yet — don't leak phantoms
+    if (tasks.length === 0) return true; // loaded conversational project with no task structure
+    if (!s.taskId || s.promptIndex == null) return false;
+    const task = tasks.find((t) => t.id === s.taskId);
+    if (!task) return false; // taskId doesn't match any current task
+    return s.promptIndex >= 0 && s.promptIndex < task.prompts.length;
+  });
+
+  const rejected = validSessions.filter((s) => s.qaStatus === "rejected");
+  const approved = validSessions.filter((s) => s.qaStatus === "approved");
+  const inReview = validSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
+
+  // Build ordered list using task+prompt order from project
   const ordered: DCSession[] = [];
-  if (tasks.length > 0) {
-    tasks.forEach((task) => {
-      task.prompts.forEach((_, pi) => {
-        const s = assignmentSessions.find((sess) => sess.taskId === task.id && sess.promptIndex === pi);
-        if (s) ordered.push(s);
-      });
+  tasks.forEach((task) => {
+    task.prompts.forEach((_, pi) => {
+      const s = validSessions.find((sess) => sess.taskId === task.id && sess.promptIndex === pi);
+      if (s) ordered.push(s);
     });
-    // Append any sessions not matched above
-    assignmentSessions.forEach((s) => { if (!ordered.includes(s)) ordered.push(s); });
-  } else {
-    ordered.push(...assignmentSessions);
-  }
+  });
+  if (tasks.length === 0) ordered.push(...validSessions);
 
   const rejectedOrdered = ordered.filter((s) => s.qaStatus === "rejected");
 
@@ -1544,7 +1551,7 @@ function ReviewDetail({
         {approved.length > 0 && (
           <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">{approved.length} approved</span>
         )}
-        {approved.length === assignmentSessions.length && assignmentSessions.length > 0 && (
+        {approved.length === validSessions.length && validSessions.length > 0 && (
           <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">✓ All approved</span>
         )}
       </div>
@@ -1679,7 +1686,7 @@ function Reviews({
 
   // ── Detail page ──
   if (selectedAssignment) {
-    const assignmentSessions = sessions.filter((s) => s.assignmentId === selectedAssignment.id);
+    const assignmentSessions = sessions.filter((s) => s.assignmentId === selectedAssignment.id && Boolean(s.audioUrl));
     return (
       <ReviewDetail
         assignment={selectedAssignment}
@@ -1712,7 +1719,7 @@ function Reviews({
 
       <div className="space-y-3">
         {submitted.map((a) => {
-          const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id);
+          const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id && Boolean(s.audioUrl));
           const rejectedCount = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
           const approvedCount = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
           const pendingCount = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
