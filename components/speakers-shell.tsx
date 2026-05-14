@@ -2553,7 +2553,7 @@ export function SpeakersShell() {
     if (!mounted || !isFirebaseConfigured()) { setAuthReady(true); return; }
     let cancelled = false;
     async function init() {
-      try { await ensureFirebaseAuthPersistence(); await resolveFirebaseRedirectSignIn(); } catch { /* ok */ }
+      try { await ensureFirebaseAuthPersistence(); await resolveFirebaseRedirectSignIn(); } catch (e) { console.warn("[Auth] redirect sign-in error:", e); }
       if (cancelled) return;
       const { auth } = getFirebaseClientServices();
       const unsub = onAuthStateChanged(auth, (u) => {

@@ -5,8 +5,10 @@ import {
   browserLocalPersistence,
   getRedirectResult,
   getAuth,
+  signInWithPopup,
   signInWithRedirect,
   setPersistence,
+  type AuthError,
   type UserCredential,
 } from "firebase/auth";
 import { Firestore, getFirestore } from "firebase/firestore";
@@ -137,10 +139,27 @@ export async function resolveFirebaseRedirectSignIn() {
   return cachedRedirectResultPromise;
 }
 
+function shouldFallbackToRedirect(error: unknown) {
+  const code = (error as AuthError | undefined)?.code;
+  return (
+    code === "auth/popup-blocked" ||
+    code === "auth/operation-not-supported-in-this-environment" ||
+    code === "auth/cancelled-popup-request" ||
+    code === "auth/popup-closed-by-user"
+  );
+}
+
 export async function signInWithGoogle(auth: Auth, googleProvider: GoogleAuthProvider) {
   await ensureFirebaseAuthPersistence();
-  await signInWithRedirect(auth, googleProvider);
-  return "redirect" as const;
+
+  try {
+    await signInWithPopup(auth, googleProvider);
+    return "popup" as const;
+  } catch (error) {
+    if (!shouldFallbackToRedirect(error)) throw error;
+    await signInWithRedirect(auth, googleProvider);
+    return "redirect" as const;
+  }
 }
 
 export function getFirebaseClientServices(): {
