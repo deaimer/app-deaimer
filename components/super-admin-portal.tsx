@@ -1961,10 +1961,26 @@ export function SuperAdminPortal({
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
 
-    async function initializeAuth() {
+    // Eagerly restore in-memory auth state — avoids spinner flash on remount when already signed in
+    const existingUser = auth.currentUser;
+    if (existingUser) {
+      setActiveUser(existingUser);
+      setAuthReady(true);
+      setIsAuthResolving(false);
+      setIsSigningIn(false);
+      if (!isSuperAdminEmail(existingUser.email)) {
+        setErrorMessage(
+          `Signed in as ${normalizeEmail(existingUser.email)}, but this account is not approved for super admin access. Allowed accounts: ${SUPER_ADMIN_EMAILS.join(", ")}`,
+        );
+      } else {
+        setErrorMessage(null);
+      }
+    } else {
       setAuthReady(false);
       setIsAuthResolving(true);
+    }
 
+    async function initializeAuth() {
       try {
         await ensureFirebaseAuthPersistence();
         await resolveFirebaseRedirectSignIn();

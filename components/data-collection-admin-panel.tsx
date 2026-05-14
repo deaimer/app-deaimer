@@ -1150,9 +1150,15 @@ function QAReviewSection({ activeUser }: { activeUser: User }) {
             const project = projects.find((p) => p.id === a.projectId);
             const tasks = project?.tasks ?? [];
             const expanded = expandedIds.has(a.id);
-            const approvedForA = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
-            const pendingForA = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
-            const rejectedForA = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
+            // Exclude phantom sessions (audioUrl exists but task/prompt no longer in project structure)
+            const validSessions = tasks.length === 0 ? assignmentSessions : assignmentSessions.filter((s) => {
+              if (!s.taskId || s.promptIndex == null) return false;
+              const task = tasks.find((t) => t.id === s.taskId);
+              return task != null && s.promptIndex >= 0 && s.promptIndex < task.prompts.length;
+            });
+            const approvedForA = validSessions.filter((s) => s.qaStatus === "approved").length;
+            const pendingForA = validSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+            const rejectedForA = validSessions.filter((s) => s.qaStatus === "rejected").length;
 
             return (
               <div key={a.id} className="overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white shadow-sm">
@@ -1168,7 +1174,7 @@ function QAReviewSection({ activeUser }: { activeUser: User }) {
                       <p className="text-xs text-muted">{a.speakerEmail}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted">{approvedForA}/{assignmentSessions.length} approved</span>
+                      <span className="text-xs text-muted">{approvedForA}/{validSessions.length} approved</span>
                       {rejectedForA > 0 && (
                         <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700">
                           {rejectedForA} rejected

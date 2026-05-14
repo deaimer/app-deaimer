@@ -476,6 +476,7 @@ function ProjectView({
 }) {
   const tasks = project.tasks ?? [];
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [localSubmitted, setLocalSubmitted] = useState(false);
   const effectiveSubmitted = localSubmitted || assignment.submittedForReview;
 
@@ -598,20 +599,27 @@ function ProjectView({
               {startContinue.label} →
             </button>
           ) : allTasksDone ? (
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => {
-                  setSubmitting(true);
-                  void submitAssignmentForReview(assignment.id)
-                    .then(() => setLocalSubmitted(true))
-                    .finally(() => setSubmitting(false));
-                }}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90 active:scale-[0.97] disabled:opacity-60"
-              >
-                {submitting ? "Submitting…" : "Submit for review →"}
-              </button>
+            <div className="mt-5 flex flex-col gap-3">
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setSubmitting(true);
+                    setSubmitError(null);
+                    void submitAssignmentForReview(assignment.id)
+                      .then(() => setLocalSubmitted(true))
+                      .catch((err) => setSubmitError(err instanceof Error ? err.message : "Submission failed. Please try again."))
+                      .finally(() => setSubmitting(false));
+                  }}
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-primary transition hover:bg-white/90 active:scale-[0.97] disabled:opacity-60"
+                >
+                  {submitting ? "Submitting…" : "Submit for review →"}
+                </button>
+              </div>
+              {submitError && (
+                <p className="text-sm text-rose-300">{submitError}</p>
+              )}
             </div>
           ) : null}
         </div>
@@ -1667,13 +1675,26 @@ function Reviews({
   const [selectedAssignment, setSelectedAssignment] = useState<DCAssignment | null>(null);
   const [detailProject, setDetailProject] = useState<DCProject | null>(null);
   const [reRecordSessions, setReRecordSessions] = useState<DCSession[] | null>(null);
+  const [projectsMap, setProjectsMap] = useState<Record<string, DCProject>>({});
+
+  // Subscribe to all submitted projects so the list can apply the same validity filter
+  const submitted = assignments.filter((a) => a.submittedForReview);
+  const submittedIds = submitted.map((a) => a.id).join(",");
+  useEffect(() => {
+    if (submitted.length === 0) return;
+    const unsubs = submitted.map((a) =>
+      subscribeToDCProjectById(a.projectId, (p) => {
+        if (p) setProjectsMap((prev) => ({ ...prev, [a.projectId]: p }));
+      })
+    );
+    return () => { unsubs.forEach((u) => u()); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submittedIds]);
 
   useEffect(() => {
     if (!selectedAssignment) { setDetailProject(null); return; }
     return subscribeToDCProjectById(selectedAssignment.projectId, setDetailProject);
   }, [selectedAssignment?.id]);
-
-  const submitted = assignments.filter((a) => a.submittedForReview);
 
   // ── Re-record flow ──
   if (reRecordSessions && selectedAssignment) {
@@ -1724,10 +1745,19 @@ function Reviews({
       <div className="space-y-3">
         {submitted.map((a) => {
           const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id && Boolean(s.audioUrl));
-          const rejectedCount = assignmentSessions.filter((s) => s.qaStatus === "rejected").length;
-          const approvedCount = assignmentSessions.filter((s) => s.qaStatus === "approved").length;
-          const pendingCount = assignmentSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
-          const allApproved = approvedCount === assignmentSessions.length && assignmentSessions.length > 0;
+          const project = projectsMap[a.projectId] ?? null;
+          const tasks = project?.tasks ?? [];
+          const validSessions = project === null || tasks.length === 0
+            ? assignmentSessions
+            : assignmentSessions.filter((s) => {
+                if (!s.taskId || s.promptIndex == null) return false;
+                const task = tasks.find((t) => t.id === s.taskId);
+                return task != null && s.promptIndex >= 0 && s.promptIndex < task.prompts.length;
+              });
+          const rejectedCount = validSessions.filter((s) => s.qaStatus === "rejected").length;
+          const approvedCount = validSessions.filter((s) => s.qaStatus === "approved").length;
+          const pendingCount = validSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+          const allApproved = approvedCount === validSessions.length && validSessions.length > 0;
 
           return (
             <button
@@ -2576,11 +2606,19 @@ export function SpeakersShell() {
   useEffect(() => {
     if (!mounted || !firebaseReady) { setAuthReady(true); setIsAuthResolving(false); return; }
     let cancelled = false;
-    async function init() {
+    const { auth } = getFirebaseClientServices();
+    // Eagerly restore in-memory auth state — avoids sign-in flash when already signed in
+    if (auth.currentUser) {
+      setUser(auth.currentUser);
+      setAuthReady(true);
+      setIsAuthResolving(false);
+    } else {
+      // Mark resolving so spinner stays up until onAuthStateChanged fires
       setIsAuthResolving(true);
+    }
+    async function init() {
       try { await ensureFirebaseAuthPersistence(); await resolveFirebaseRedirectSignIn(); } catch (e) { console.warn("[Auth] redirect sign-in error:", e); }
       if (cancelled) return;
-      const { auth } = getFirebaseClientServices();
       const unsub = onAuthStateChanged(auth, (u) => {
         if (cancelled) return;
         setUser(u);
@@ -2643,7 +2681,7 @@ export function SpeakersShell() {
     }
   }
 
-  if (!mounted || !authReady) {
+  if (!mounted || !authReady || isAuthResolving) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f7faff]">
         <span className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
