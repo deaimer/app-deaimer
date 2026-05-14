@@ -2365,8 +2365,19 @@ function Guidelines() {
 
 // ─── Conversational project ───────────────────────────────────────────────────
 
-const STUN_SERVERS: RTCIceServer[] = [
+// STUN for direct connections + TURN relay for symmetric NAT (required on mobile networks)
+const ICE_SERVERS: RTCIceServer[] = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  {
+    // Open Relay — replace with your own TURN credentials in production
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turns:openrelay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
 ];
 
 function ConversationalProjectView({
@@ -2420,6 +2431,7 @@ function ConversationalProjectView({
   const prevTaskIndexRef = useRef(-1);
   const prevStatusRef = useRef<string>("waiting");
   const everJoinedRef = useRef(false);
+  const recordingStartedRef = useRef(false);
 
   const myEmail = user.email?.toLowerCase() ?? "";
   const isPrimary = assignment !== null;
@@ -2441,6 +2453,29 @@ function ConversationalProjectView({
 
   // Keep roomRef current for use inside async callbacks
   useEffect(() => { roomRef.current = room; }, [room]);
+
+  // Presence tracking: keep our online flag live in Firestore.
+  // Fires when the user hides/shows the tab or loses/regains network.
+  useEffect(() => {
+    if (!room?.id || !iAmJoined) return;
+    const rid = room.id;
+    const uid = user.uid;
+    const markOnline = () =>
+      void updateConversationRoomParticipant(rid, uid, { online: true }).catch(() => {});
+    const markOffline = () =>
+      void updateConversationRoomParticipant(rid, uid, { online: false }).catch(() => {});
+    const onVisibility = () => { if (document.hidden) markOffline(); else markOnline(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", markOnline);
+    window.addEventListener("offline", markOffline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", markOnline);
+      window.removeEventListener("offline", markOffline);
+      markOffline();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, iAmJoined]);
 
   // Initialize room (primary only)
   useEffect(() => {
@@ -2590,7 +2625,7 @@ function ConversationalProjectView({
       localStreamRef.current = stream;
       startVisualizer(stream);
 
-      const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
@@ -2602,29 +2637,51 @@ function ConversationalProjectView({
       };
       if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
 
-      // ICE candidates
+      // ICE candidates → write to Firestore for the other peer
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           void addConvIceCandidate(roomId, isPrimary ? "primary" : "secondary", JSON.stringify(e.candidate.toJSON()));
         }
       };
 
-      // Connection state
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "connected") {
-          setLocalConnecting(false);
-          // Primary: signal all to start recording
-          if (isPrimary) {
-            void updateConversationRoomStatus(roomId, "recording", { taskIndex: 0 });
-          }
-        }
-        if (pc.connectionState === "failed") {
-          setWebrtcError("Audio connection failed. Please try again.");
-          setLocalConnecting(false);
+      // Called when ICE connection is established (most reliable signal on mobile)
+      const onConnected = () => {
+        if (recordingStartedRef.current) return;
+        recordingStartedRef.current = true;
+        setLocalConnecting(false);
+        if (isPrimary) {
+          void updateConversationRoomStatus(roomId, "recording", { taskIndex: currentTaskIndex });
         }
       };
 
-      // Primary: create offer
+      pc.oniceconnectionstatechange = () => {
+        const s = pc.iceConnectionState;
+        if (s === "connected" || s === "completed") {
+          onConnected();
+        } else if (s === "disconnected") {
+          // Temporary drop (e.g. switching WiFi↔mobile) — WebRTC retries automatically
+          setWebrtcError("Connection interrupted — reconnecting…");
+        } else if (s === "failed") {
+          setWebrtcError("Audio connection failed. Please go back and try again.");
+          setLocalConnecting(false);
+        } else if (s === "checking" || s === "new") {
+          setWebrtcError(null);
+        }
+      };
+
+      // Fallback: some browsers only fire connectionState, not iceConnectionState
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          onConnected();
+        } else if (pc.connectionState === "failed") {
+          setWebrtcError("Audio connection failed. Please go back and try again.");
+          setLocalConnecting(false);
+        } else if (pc.connectionState === "disconnected") {
+          setWebrtcError("Connection interrupted — reconnecting…");
+        }
+      };
+
+      // Primary: create offer and write to Firestore for secondary to pick up
       if (isPrimary && !offerHandledRef.current) {
         offerHandledRef.current = true;
         const offer = await pc.createOffer();
@@ -2632,18 +2689,17 @@ function ConversationalProjectView({
         await updateConversationRoomFields(roomId, { offer: JSON.stringify(offer) });
       }
 
-      // Process any signaling that arrived before PC was ready
+      // Process any signaling (offer/answer/ICE) that arrived before PC was ready
       if (roomRef.current) void processSignaling(roomRef.current);
 
-      // Race-condition guard: if status is already "recording" by the time mic
-      // setup finishes (primary connected quickly), start recording immediately.
+      // Race-condition guard: status already "recording" by the time mic finishes
       if (roomRef.current?.status === "recording" && localStreamRef.current) {
         startLocalRecording();
       }
     } catch (e) {
       const name = (e as { name?: string }).name;
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setWebrtcError("Microphone access denied. Please allow microphone access and try again.");
+        setWebrtcError("Microphone access denied. Please allow it and try again.");
       } else {
         setWebrtcError(e instanceof Error ? e.message : "Could not access microphone.");
       }
@@ -2767,6 +2823,7 @@ function ConversationalProjectView({
     setWebrtcError(null);
     offerHandledRef.current = false;
     answerHandledRef.current = false;
+    recordingStartedRef.current = false;
     processedIcePrimaryRef.current.clear();
     processedIceSecondaryRef.current.clear();
     pendingIceRef.current = [];
@@ -2881,6 +2938,26 @@ function ConversationalProjectView({
           <p className="text-base font-semibold text-rose-800">You have been removed from this session.</p>
           <p className="mt-1 text-sm text-rose-600">Please contact the host if you believe this is a mistake.</p>
         </div>
+      </div>
+    );
+  }
+
+  // Secondary: room may not exist yet (host hasn't opened it). Subscription is live — wait.
+  if (!room && !isPrimary) {
+    return (
+      <div className="space-y-4">
+        <button type="button" onClick={onBack} className="text-sm font-medium text-muted hover:text-ink">← Back</button>
+        {joinError ? (
+          <p className="text-sm text-rose-600">{joinError}</p>
+        ) : (
+          <div className="flex flex-col items-center gap-4 rounded-[1.75rem] border border-amber-200 bg-amber-50 px-6 py-12 text-center">
+            <span className="h-7 w-7 animate-spin rounded-full border-2 border-amber-300 border-t-amber-600" />
+            <div>
+              <p className="text-base font-semibold text-amber-900">Waiting for the host to open the session</p>
+              <p className="mt-1 text-sm text-amber-700">You&apos;ll be connected automatically — no need to refresh.</p>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
