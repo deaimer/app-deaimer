@@ -2075,6 +2075,20 @@ function Profile({
 
   return (
     <div className="space-y-4">
+      {/* Saving overlay — shown during onboarding profile save */}
+      {isOnboarding && saving && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
+          <div className="flex w-72 flex-col items-center text-center">
+            <span className="h-10 w-10 animate-spin rounded-full border-[3px] border-slate-200 border-t-primary" />
+            <p className="mt-5 text-base font-semibold text-ink">Saving your profile…</p>
+            <p className="mt-1 text-sm text-muted">This only takes a moment.</p>
+            <div className="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full animate-pulse rounded-full bg-primary" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       {isOnboarding ? (
         <div className="overflow-hidden rounded-[1.75rem] border border-primary/10 bg-gradient-to-br from-primary/[0.08] via-primary/[0.04] to-transparent px-5 pb-6 pt-5">
@@ -2320,7 +2334,11 @@ function SpeakerPortal({ user }: { user: User }) {
     if (!user.email) return;
     setSpeakerLoading(true);
     return subscribeToDCSpeakerByEmail(user.email, (s) => {
-      setSpeaker(s);
+      setSpeaker((prev) => {
+        // Never let a stale snapshot degrade a complete profile back to incomplete
+        if (prev && s && isProfileComplete(prev) && !isProfileComplete(s)) return prev;
+        return s;
+      });
       setSpeakerLoading(false);
     });
   }, [user.email]);
@@ -2504,7 +2522,14 @@ function SpeakerPortal({ user }: { user: User }) {
             />
           )}
           {effectiveSection === "profile" && (
-            <Profile speaker={speaker} onSaved={setSpeaker} isOnboarding={!profileComplete} />
+            <Profile
+            speaker={speaker}
+            onSaved={(s) => {
+              setSpeaker(s);
+              if (!profileComplete) navigateTo("dashboard");
+            }}
+            isOnboarding={!profileComplete}
+          />
           )}
           {effectiveSection === "guidelines" && <Guidelines />}
         </div>
