@@ -5,10 +5,8 @@ import {
   browserLocalPersistence,
   getRedirectResult,
   getAuth,
-  signInWithPopup,
   signInWithRedirect,
   setPersistence,
-  type AuthError,
   type UserCredential,
 } from "firebase/auth";
 import { Firestore, getFirestore } from "firebase/firestore";
@@ -67,16 +65,6 @@ let cachedStorage: FirebaseStorage | null = null;
 let cachedPersistencePromise: Promise<void> | null = null;
 let cachedRedirectResultPromise: Promise<UserCredential | null> | null = null;
 
-function shouldFallbackToRedirect(error: unknown) {
-  const code = (error as AuthError | undefined)?.code;
-
-  return (
-    code === "auth/popup-blocked" ||
-    code === "auth/operation-not-supported-in-this-environment" ||
-    code === "auth/cancelled-popup-request" ||
-    code === "auth/popup-closed-by-user"
-  );
-}
 
 export function isFirebaseConfigured() {
   return requiredFirebaseEnv.every((entry) => Boolean(entry.value));
@@ -151,18 +139,8 @@ export async function resolveFirebaseRedirectSignIn() {
 
 export async function signInWithGoogle(auth: Auth, googleProvider: GoogleAuthProvider) {
   await ensureFirebaseAuthPersistence();
-
-  try {
-    await signInWithPopup(auth, googleProvider);
-    return "popup" as const;
-  } catch (error) {
-    if (!shouldFallbackToRedirect(error)) {
-      throw error;
-    }
-
-    await signInWithRedirect(auth, googleProvider);
-    return "redirect" as const;
-  }
+  await signInWithRedirect(auth, googleProvider);
+  return "redirect" as const;
 }
 
 export function getFirebaseClientServices(): {
