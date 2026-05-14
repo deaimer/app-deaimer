@@ -2387,6 +2387,9 @@ function ConversationalProjectView({
   const [room, setRoom] = useState<DCConversationRoom | null>(null);
   const [roomLoading, setRoomLoading] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [kicked, setKicked] = useState(false);
+  // For secondary speakers: true once /api/dc-room/join-secondary succeeds (primary starts true)
+  const [secondaryApiDone, setSecondaryApiDone] = useState(assignment !== null);
   const [copyDone, setCopyDone] = useState(false);
 
   // Local recording state (reset per task)
@@ -2416,6 +2419,7 @@ function ConversationalProjectView({
   const roomRef = useRef<DCConversationRoom | null>(null);
   const prevTaskIndexRef = useRef(-1);
   const prevStatusRef = useRef<string>("waiting");
+  const everJoinedRef = useRef(false);
 
   const myEmail = user.email?.toLowerCase() ?? "";
   const isPrimary = assignment !== null;
@@ -2454,14 +2458,58 @@ function ConversationalProjectView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment?.id]);
 
+  // Secondary: ensure speakerAccess doc exists before subscribing
+  useEffect(() => {
+    if (isPrimary) return;
+    const { auth } = getFirebaseClientServices();
+    void (async () => {
+      try {
+        const idToken = await auth.currentUser?.getIdToken();
+        if (!idToken) throw new Error("Not signed in");
+        const name = speaker.name || `${speaker.firstName} ${speaker.lastName}`.trim() || myEmail;
+        const res = await fetch("/api/dc-room/join-secondary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ name }),
+        });
+        if (!res.ok) {
+          const j = await res.json() as { error?: string };
+          throw new Error(j.error ?? `API error ${res.status}`);
+        }
+        setSecondaryApiDone(true);
+      } catch (e) {
+        setJoinError(e instanceof Error ? e.message : "Failed to join session.");
+        setRoomLoading(false);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Subscribe to room
   useEffect(() => {
-    if (!propRoomId) return;
-    return subscribeToConversationRoom(propRoomId, (r) => {
-      setRoom(r);
-      setRoomLoading(false);
-    });
-  }, [propRoomId]);
+    if (!propRoomId || !secondaryApiDone) return;
+    return subscribeToConversationRoom(
+      propRoomId,
+      (r) => {
+        setRoom(r);
+        setRoomLoading(false);
+        if (!isPrimary && r) {
+          const amIn = r.participants.some((p) => p.email === myEmail);
+          if (amIn) everJoinedRef.current = true;
+          else if (everJoinedRef.current) setKicked(true);
+        }
+      },
+      (err) => {
+        setJoinError(
+          err.message.includes("permission")
+            ? "Access denied. Ask the host to re-share the invite link."
+            : err.message,
+        );
+        setRoomLoading(false);
+      },
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propRoomId, secondaryApiDone]);
 
   // Secondary: join room when it appears and we haven't joined
   useEffect(() => {
@@ -2821,6 +2869,18 @@ function ConversationalProjectView({
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (kicked) {
+    return (
+      <div className="space-y-4">
+        <button type="button" onClick={onBack} className="text-sm font-medium text-muted hover:text-ink">← Back</button>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-6 py-10 text-center">
+          <p className="text-base font-semibold text-rose-800">You have been removed from this session.</p>
+          <p className="mt-1 text-sm text-rose-600">Please contact the host if you believe this is a mistake.</p>
+        </div>
       </div>
     );
   }

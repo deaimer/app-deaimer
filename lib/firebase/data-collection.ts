@@ -879,9 +879,12 @@ export async function createOrGetConversationRoom(params: {
 export function subscribeToConversationRoom(
   roomId: string,
   callback: (room: DCConversationRoom | null) => void,
+  onError?: (err: Error) => void,
 ) {
-  return onSnapshot(doc(db(), "dcConversationRooms", roomId), (snap) =>
-    callback(snap.exists() ? { id: snap.id, ...snap.data() } as DCConversationRoom : null),
+  return onSnapshot(
+    doc(db(), "dcConversationRooms", roomId),
+    (snap) => callback(snap.exists() ? { id: snap.id, ...snap.data() } as DCConversationRoom : null),
+    (err) => onError?.(err),
   );
 }
 
@@ -1008,15 +1011,23 @@ export async function submitConvSession(input: DCSessionInput): Promise<string> 
 
   const durationHours = input.duration / 3600;
 
-  // Only update assignment + project (skip speakerAccess for secondary speakers who may not have a doc)
-  await updateDoc(doc(db(), "dcAssignments", input.assignmentId), {
-    hoursCompleted: increment(durationHours),
-    sessionsCount: increment(1),
-  });
-  await updateDoc(doc(db(), "dcProjects", input.projectId), {
-    hoursCompleted: increment(durationHours),
-    updatedAt: serverTimestamp(),
-  });
+  // Assignment update may fail for secondary speakers (email mismatch) — ignore so audio is always saved
+  try {
+    await updateDoc(doc(db(), "dcAssignments", input.assignmentId), {
+      hoursCompleted: increment(durationHours),
+      sessionsCount: increment(1),
+    });
+  } catch {
+    // secondary speakers don't own the assignment doc — safe to skip
+  }
+  try {
+    await updateDoc(doc(db(), "dcProjects", input.projectId), {
+      hoursCompleted: increment(durationHours),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // best-effort
+  }
 
   return docRef.id;
 }
