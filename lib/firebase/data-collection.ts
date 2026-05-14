@@ -1,5 +1,6 @@
 import {
   addDoc,
+  arrayUnion,
   collection,
   doc,
   getDoc,
@@ -795,4 +796,227 @@ export async function updateDCSessionTranscription(
     ...(wer != null ? { werScore: wer } : {}),
     updatedAt: serverTimestamp(),
   });
+}
+
+// ─── Conversational rooms ─────────────────────────────────────────────────────
+
+export type DCConvStatus = "waiting" | "recording" | "stopped" | "done";
+
+export interface DCConvParticipant {
+  uid: string;
+  email: string;
+  name: string;
+  role: "primary" | "secondary";
+  online: boolean;
+  ready: boolean;
+  uploadStatus: "idle" | "uploading" | "done";
+  audioUrl?: string;
+  sessionId?: string;
+}
+
+export interface DCConversationRoom {
+  id: string;
+  projectId: string;
+  assignmentId: string;
+  primaryUid: string;
+  primaryEmail: string;
+  invitedEmails: string[];
+  participants: DCConvParticipant[];
+  speakersRequired: number;
+  taskIndex: number;
+  totalTasks: number;
+  status: DCConvStatus;
+  startSignalAt?: unknown;
+  stopSignalAt?: unknown;
+  createdAt?: unknown;
+  // WebRTC signaling (primary → secondary offer/answer + ICE)
+  offer?: string;
+  answer?: string;
+  icePrimary: string[];
+  iceSecondary: string[];
+}
+
+export async function createOrGetConversationRoom(params: {
+  assignmentId: string;
+  projectId: string;
+  primaryUid: string;
+  primaryEmail: string;
+  primaryName: string;
+  speakersRequired: number;
+  totalTasks: number;
+}): Promise<DCConversationRoom> {
+  const ref = doc(db(), "dcConversationRooms", params.assignmentId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return { id: snap.id, ...snap.data() } as DCConversationRoom;
+
+  const room: Omit<DCConversationRoom, "id"> = {
+    projectId: params.projectId,
+    assignmentId: params.assignmentId,
+    primaryUid: params.primaryUid,
+    primaryEmail: params.primaryEmail,
+    invitedEmails: [],
+    participants: [{
+      uid: params.primaryUid,
+      email: params.primaryEmail,
+      name: params.primaryName,
+      role: "primary",
+      online: true,
+      ready: false,
+      uploadStatus: "idle",
+    }],
+    speakersRequired: params.speakersRequired,
+    taskIndex: 0,
+    totalTasks: params.totalTasks,
+    status: "waiting",
+    icePrimary: [],
+    iceSecondary: [],
+    createdAt: serverTimestamp(),
+  };
+  await setDoc(ref, room);
+  return { id: params.assignmentId, ...room };
+}
+
+export function subscribeToConversationRoom(
+  roomId: string,
+  callback: (room: DCConversationRoom | null) => void,
+) {
+  return onSnapshot(doc(db(), "dcConversationRooms", roomId), (snap) =>
+    callback(snap.exists() ? { id: snap.id, ...snap.data() } as DCConversationRoom : null),
+  );
+}
+
+export async function joinConversationRoom(
+  roomId: string,
+  participant: Omit<DCConvParticipant, "role">,
+) {
+  const ref = doc(db(), "dcConversationRooms", roomId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Room not found.");
+  const room = snap.data() as DCConversationRoom;
+  const already = room.participants.some((p) => p.uid === participant.uid);
+  if (already) {
+    // Just mark online
+    const updated = room.participants.map((p) =>
+      p.uid === participant.uid ? { ...p, online: true } : p,
+    );
+    await updateDoc(ref, { participants: updated });
+  } else {
+    const newP: DCConvParticipant = { ...participant, role: "secondary", online: true, ready: false, uploadStatus: "idle" };
+    await updateDoc(ref, {
+      participants: arrayUnion(newP),
+      invitedEmails: arrayUnion(participant.email),
+    });
+  }
+}
+
+export async function updateConversationRoomStatus(
+  roomId: string,
+  status: DCConvStatus,
+  extra?: Record<string, unknown>,
+) {
+  const updates: Record<string, unknown> = { status };
+  if (status === "recording") updates.startSignalAt = serverTimestamp();
+  if (status === "stopped") updates.stopSignalAt = serverTimestamp();
+  if (extra) Object.assign(updates, extra);
+  await updateDoc(doc(db(), "dcConversationRooms", roomId), updates);
+}
+
+export async function updateConversationRoomParticipant(
+  roomId: string,
+  uid: string,
+  fields: Partial<DCConvParticipant>,
+) {
+  const snap = await getDoc(doc(db(), "dcConversationRooms", roomId));
+  if (!snap.exists()) return;
+  const room = snap.data() as DCConversationRoom;
+  const participants = room.participants.map((p) =>
+    p.uid === uid ? { ...p, ...fields } : p,
+  );
+  await updateDoc(doc(db(), "dcConversationRooms", roomId), { participants });
+}
+
+export async function addConvIceCandidate(
+  roomId: string,
+  role: "primary" | "secondary",
+  candidate: string,
+) {
+  const field = role === "primary" ? "icePrimary" : "iceSecondary";
+  await updateDoc(doc(db(), "dcConversationRooms", roomId), {
+    [field]: arrayUnion(candidate),
+  });
+}
+
+export async function updateConversationRoomFields(
+  roomId: string,
+  fields: Record<string, unknown>,
+) {
+  await updateDoc(doc(db(), "dcConversationRooms", roomId), fields);
+}
+
+export async function submitConvSession(input: DCSessionInput): Promise<string> {
+  const { auth } = getFirebaseClientServices();
+  const idToken = await auth.currentUser?.getIdToken(true);
+  if (!idToken) throw new Error("Not authenticated.");
+
+  const timestamp = Date.now();
+  const ext = input.mimeType.includes("mp4") ? "mp4" : "webm";
+  const filename = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}.${ext}`;
+
+  const presignRes = await fetch("/api/dc-audio/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+    body: JSON.stringify({ key: filename, contentType: input.mimeType }),
+  });
+  if (!presignRes.ok) throw new Error(`Presign ${presignRes.status}`);
+  const { presignedUrl, publicUrl: audioUrl } = await presignRes.json() as { presignedUrl: string; publicUrl: string };
+
+  const uploadRes = await fetch(presignedUrl, {
+    method: "PUT",
+    body: input.audioBlob,
+    headers: { "Content-Type": input.mimeType },
+  });
+  if (!uploadRes.ok) throw new Error(`Upload ${uploadRes.status}`);
+
+  const docRef = await addDoc(collection(db(), "dcSessions"), {
+    projectId: input.projectId,
+    projectName: input.projectName,
+    speakerId: input.speakerId,
+    speakerName: input.speakerName,
+    assignmentId: input.assignmentId,
+    taskId: input.taskId ?? null,
+    promptIndex: input.promptIndex ?? null,
+    promptText: input.promptText ?? null,
+    audioUrl,
+    filePath: filename,
+    duration: input.duration,
+    sampleRate: input.sampleRate,
+    bitDepth: input.bitDepth,
+    gender: input.gender,
+    age: input.age,
+    dialect: input.dialect,
+    region: input.region,
+    transcriptionStatus: "pending",
+    transcriptText: "",
+    werScore: null,
+    qaStatus: "pending",
+    qaReviewerEmail: "",
+    qaScore: null,
+    qaNote: "",
+    flags: [],
+    createdAt: serverTimestamp(),
+  });
+
+  const durationHours = input.duration / 3600;
+
+  // Only update assignment + project (skip speakerAccess for secondary speakers who may not have a doc)
+  await updateDoc(doc(db(), "dcAssignments", input.assignmentId), {
+    hoursCompleted: increment(durationHours),
+    sessionsCount: increment(1),
+  });
+  await updateDoc(doc(db(), "dcProjects", input.projectId), {
+    hoursCompleted: increment(durationHours),
+    updatedAt: serverTimestamp(),
+  });
+
+  return docRef.id;
 }

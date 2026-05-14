@@ -29,14 +29,23 @@ import {
   signInWithGoogle,
 } from "@/lib/firebase/client";
 import {
+  addConvIceCandidate,
+  createOrGetConversationRoom,
+  joinConversationRoom,
   subscribeToDCAssignmentsBySpeaker,
   subscribeToDCProjectById,
   subscribeToDCSessionsBySpeaker,
   subscribeToDCSpeakerProfileByUid,
+  subscribeToConversationRoom,
   submitAssignmentForReview,
+  submitConvSession,
   submitDCSession,
+  updateConversationRoomFields,
+  updateConversationRoomParticipant,
+  updateConversationRoomStatus,
   updateDCSpeakerProfile,
   type DCAssignment,
+  type DCConversationRoom,
   type DCProject,
   type DCSession,
   type DCSpeaker,
@@ -2335,6 +2344,791 @@ function Guidelines() {
   );
 }
 
+// ─── Conversational project ───────────────────────────────────────────────────
+
+const STUN_SERVERS: RTCIceServer[] = [
+  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+];
+
+function ConversationalProjectView({
+  user,
+  speaker,
+  assignment,
+  project,
+  roomId: propRoomId,
+  onBack,
+}: {
+  user: User;
+  speaker: DCSpeaker;
+  assignment: DCAssignment | null;
+  project: DCProject | null;
+  roomId: string;
+  onBack: () => void;
+}) {
+  const [room, setRoom] = useState<DCConversationRoom | null>(null);
+  const [roomLoading, setRoomLoading] = useState(true);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [copyDone, setCopyDone] = useState(false);
+
+  // Local recording state (reset per task)
+  const [localBlob, setLocalBlob] = useState<{ blob: Blob; mimeType: string; duration: number; url: string } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [levelBars, setLevelBars] = useState<number[]>(Array(24).fill(0));
+  const [warnShown, setWarnShown] = useState(false);
+  const [myUploadStatus, setMyUploadStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [localConnecting, setLocalConnecting] = useState(false);
+  const [webrtcError, setWebrtcError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const processedIcePrimaryRef = useRef<Set<string>>(new Set());
+  const processedIceSecondaryRef = useRef<Set<string>>(new Set());
+  const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
+  const offerHandledRef = useRef(false);
+  const answerHandledRef = useRef(false);
+  const roomRef = useRef<DCConversationRoom | null>(null);
+  const prevTaskIndexRef = useRef(-1);
+  const prevStatusRef = useRef<string>("waiting");
+
+  const myEmail = user.email?.toLowerCase() ?? "";
+  const isPrimary = assignment !== null;
+  const roomId = room?.id ?? propRoomId;
+  const myParticipant = room?.participants.find((p) => p.email === myEmail) ?? null;
+  const iAmJoined = myParticipant !== null;
+  const currentTaskIndex = room?.taskIndex ?? 0;
+  const currentTask = project?.tasks[currentTaskIndex] ?? null;
+  const prompt = currentTask?.prompts[0] ?? null;
+  const minSec = currentTask?.minDurationSeconds ?? 10;
+  const maxSec = currentTask?.maxDurationSeconds ?? 300;
+  const totalTasks = project?.tasks.length ?? 0;
+  const isLastTask = currentTaskIndex >= totalTasks - 1;
+  const requiredSpeakers = room?.speakersRequired ?? 2;
+  const onlineCount = room?.participants.filter((p) => p.online).length ?? 0;
+  const allJoined = onlineCount >= requiredSpeakers;
+  const allUploaded = (room?.participants ?? []).length > 0 &&
+    room!.participants.every((p) => p.uploadStatus === "done");
+
+  // Keep roomRef current for use inside async callbacks
+  useEffect(() => { roomRef.current = room; }, [room]);
+
+  // Initialize room (primary only)
+  useEffect(() => {
+    if (!assignment || !project) return;
+    const speakersRequired = project.tasks[0]?.speakersRequired ?? 2;
+    void createOrGetConversationRoom({
+      assignmentId: assignment.id,
+      projectId: assignment.projectId,
+      primaryUid: user.uid,
+      primaryEmail: myEmail,
+      primaryName: speaker.name || `${speaker.firstName} ${speaker.lastName}`.trim() || myEmail,
+      speakersRequired,
+      totalTasks: project.tasks.length,
+    }).catch((e) => setJoinError(e instanceof Error ? e.message : "Failed to create session."));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment?.id]);
+
+  // Subscribe to room
+  useEffect(() => {
+    if (!propRoomId) return;
+    return subscribeToConversationRoom(propRoomId, (r) => {
+      setRoom(r);
+      setRoomLoading(false);
+    });
+  }, [propRoomId]);
+
+  // Secondary: join room when it appears and we haven't joined
+  useEffect(() => {
+    if (isPrimary || !room || iAmJoined) return;
+    void joinConversationRoom(room.id, {
+      uid: user.uid,
+      email: myEmail,
+      name: speaker.name || `${speaker.firstName} ${speaker.lastName}`.trim() || myEmail,
+      online: true,
+      ready: false,
+      uploadStatus: "idle",
+    }).catch((e) => setJoinError(e instanceof Error ? e.message : "Failed to join session."));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, isPrimary, iAmJoined]);
+
+  // React to room status / taskIndex changes
+  useEffect(() => {
+    if (!room) return;
+    const prevStatus = prevStatusRef.current;
+    const prevTaskIndex = prevTaskIndexRef.current;
+    prevStatusRef.current = room.status;
+    prevTaskIndexRef.current = room.taskIndex;
+
+    // Secondary: set up WebRTC when offer appears (primary has clicked Start)
+    if (!isPrimary && room.offer && !offerHandledRef.current && localStreamRef.current === null) {
+      void setupWebRTCAndMic();
+    }
+
+    const taskChanged = room.taskIndex !== prevTaskIndex && prevTaskIndex !== -1;
+    const startedRecording = room.status === "recording" && prevStatus !== "recording";
+    const stoppedRecording = room.status === "stopped" && prevStatus === "recording";
+
+    if (startedRecording || (taskChanged && room.status === "recording")) {
+      // Reset per-task local state
+      if (localBlob?.url) URL.revokeObjectURL(localBlob.url);
+      setLocalBlob(null);
+      setElapsed(0);
+      setWarnShown(false);
+      setMyUploadStatus("idle");
+      setUploadError(null);
+      // Start recording if we have a mic stream
+      if (localStreamRef.current) {
+        startLocalRecording();
+      }
+    }
+
+    if (stoppedRecording) {
+      stopLocalRecording();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.status, room?.taskIndex]);
+
+  // Process WebRTC signaling whenever room updates
+  useEffect(() => {
+    if (!room || !pcRef.current) return;
+    void processSignaling(room);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.offer, room?.answer, room?.icePrimary?.length, room?.iceSecondary?.length]);
+
+  // Auto-stop at max duration (primary only)
+  useEffect(() => {
+    if (room?.status !== "recording" || !isPrimary) return;
+    if (elapsed >= maxSec) void handlePrimaryStop();
+    if (!warnShown && maxSec - elapsed <= 60 && elapsed > 0) setWarnShown(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elapsed, maxSec, room?.status]);
+
+  async function setupWebRTCAndMic() {
+    setLocalConnecting(true);
+    setWebrtcError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      startVisualizer(stream);
+
+      const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+      pcRef.current = pc;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      // Remote audio
+      const remoteStream = new MediaStream();
+      pc.ontrack = (e) => {
+        e.streams[0]?.getTracks().forEach((t) => remoteStream.addTrack(t));
+        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = new MediaStream(remoteStream.getTracks());
+      };
+      if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream;
+
+      // ICE candidates
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          void addConvIceCandidate(roomId, isPrimary ? "primary" : "secondary", JSON.stringify(e.candidate.toJSON()));
+        }
+      };
+
+      // Connection state
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          setLocalConnecting(false);
+          // Primary: signal all to start recording
+          if (isPrimary) {
+            void updateConversationRoomStatus(roomId, "recording", { taskIndex: 0 });
+          }
+        }
+        if (pc.connectionState === "failed") {
+          setWebrtcError("Audio connection failed. Please try again.");
+          setLocalConnecting(false);
+        }
+      };
+
+      // Primary: create offer
+      if (isPrimary && !offerHandledRef.current) {
+        offerHandledRef.current = true;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await updateConversationRoomFields(roomId, { offer: JSON.stringify(offer) });
+      }
+
+      // Process any signaling that arrived before PC was ready
+      if (roomRef.current) void processSignaling(roomRef.current);
+    } catch (e) {
+      const name = (e as { name?: string }).name;
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setWebrtcError("Microphone access denied. Please allow microphone access and try again.");
+      } else {
+        setWebrtcError(e instanceof Error ? e.message : "Could not access microphone.");
+      }
+      setLocalConnecting(false);
+    }
+  }
+
+  async function processSignaling(r: DCConversationRoom) {
+    const pc = pcRef.current;
+    if (!pc) return;
+
+    if (!isPrimary) {
+      // Secondary: handle offer
+      if (r.offer && !offerHandledRef.current && pc.signalingState === "stable") {
+        offerHandledRef.current = true;
+        try {
+          const offer = JSON.parse(r.offer) as RTCSessionDescriptionInit;
+          await pc.setRemoteDescription(offer);
+          // Drain pending ICE
+          for (const c of pendingIceRef.current) {
+            await pc.addIceCandidate(c).catch(() => {});
+          }
+          pendingIceRef.current = [];
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await updateConversationRoomFields(roomId, { answer: JSON.stringify(answer) });
+        } catch (e) { console.error("[WebRTC] answer error:", e); }
+      }
+      // Process ICE from primary
+      if (r.icePrimary) {
+        for (const c of r.icePrimary) {
+          if (processedIcePrimaryRef.current.has(c)) continue;
+          processedIcePrimaryRef.current.add(c);
+          const candidate = JSON.parse(c) as RTCIceCandidateInit;
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(candidate).catch(() => {});
+          } else {
+            pendingIceRef.current.push(candidate);
+          }
+        }
+      }
+    } else {
+      // Primary: handle answer
+      if (r.answer && !answerHandledRef.current && pc.signalingState === "have-local-offer") {
+        answerHandledRef.current = true;
+        try {
+          const answer = JSON.parse(r.answer) as RTCSessionDescriptionInit;
+          await pc.setRemoteDescription(answer);
+          // Drain pending ICE
+          for (const c of pendingIceRef.current) {
+            await pc.addIceCandidate(c).catch(() => {});
+          }
+          pendingIceRef.current = [];
+        } catch (e) { console.error("[WebRTC] setAnswer error:", e); }
+      }
+      // Process ICE from secondary
+      if (r.iceSecondary) {
+        for (const c of r.iceSecondary) {
+          if (processedIceSecondaryRef.current.has(c)) continue;
+          processedIceSecondaryRef.current.add(c);
+          const candidate = JSON.parse(c) as RTCIceCandidateInit;
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(candidate).catch(() => {});
+          } else {
+            pendingIceRef.current.push(candidate);
+          }
+        }
+      }
+    }
+  }
+
+  function startVisualizer(stream: MediaStream) {
+    try {
+      const ctx = new AudioContext();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      function tick() {
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(data);
+        setLevelBars(Array.from({ length: 24 }, (_, i) =>
+          Math.round((data[Math.floor((i / 24) * data.length)] / 255) * 100),
+        ));
+        animFrameRef.current = requestAnimationFrame(tick);
+      }
+      tick();
+    } catch { /* AudioContext may not be available */ }
+  }
+
+  function startLocalRecording() {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    chunksRef.current = [];
+    let recorder: MediaRecorder;
+    try {
+      const preferred = MediaRecorder.isTypeSupported?.("audio/webm") ? "audio/webm" : "audio/mp4";
+      recorder = new MediaRecorder(stream, { mimeType: preferred });
+    } catch { recorder = new MediaRecorder(stream); }
+    const rawMime = recorder.mimeType || "";
+    const mimeType = rawMime.startsWith("audio/mp4") ? "audio/mp4" : "audio/webm";
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      setLocalBlob({ blob, mimeType, duration: elapsed, url });
+    };
+    mediaRecorderRef.current = recorder;
+    recorder.start(100);
+    if (timerRef.current) clearInterval(timerRef.current);
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+  }
+
+  function stopLocalRecording() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    try { mediaRecorderRef.current?.stop(); } catch { /* already stopped */ }
+  }
+
+  async function handlePrimaryStart() {
+    setLocalConnecting(true);
+    setWebrtcError(null);
+    offerHandledRef.current = false;
+    answerHandledRef.current = false;
+    processedIcePrimaryRef.current.clear();
+    processedIceSecondaryRef.current.clear();
+    pendingIceRef.current = [];
+    await setupWebRTCAndMic();
+  }
+
+  async function handlePrimaryStop() {
+    stopLocalRecording();
+    await updateConversationRoomStatus(roomId, "stopped");
+  }
+
+  async function handleUpload() {
+    if (!localBlob || !currentTask || !project || !room) return;
+    setMyUploadStatus("uploading");
+    setUploadError(null);
+    try {
+      const sessionId = await submitConvSession({
+        projectId: project.id,
+        projectName: project.name,
+        speakerId: myEmail,
+        speakerName: speaker.name || `${speaker.firstName} ${speaker.lastName}`.trim() || myEmail,
+        assignmentId: room.assignmentId,
+        taskId: currentTask.id,
+        promptIndex: 0,
+        promptText: prompt?.text ?? "",
+        audioBlob: localBlob.blob,
+        mimeType: localBlob.mimeType,
+        duration: localBlob.duration,
+        sampleRate: 44100,
+        bitDepth: 16,
+        gender: speaker.gender ?? "",
+        age: speaker.age ?? "",
+        dialect: speaker.languages[0] ?? "",
+        region: speaker.region ?? "",
+      });
+      setMyUploadStatus("done");
+      await updateConversationRoomParticipant(roomId, user.uid, { uploadStatus: "done", sessionId });
+    } catch (e) {
+      setMyUploadStatus("error");
+      setUploadError(e instanceof Error ? e.message : "Upload failed. Please try again.");
+    }
+  }
+
+  async function handleNextTask() {
+    if (!room || !isPrimary || !allUploaded) return;
+    if (isLastTask) {
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        await submitAssignmentForReview(room.assignmentId);
+        await updateConversationRoomStatus(roomId, "done");
+      } catch (e) {
+        setSubmitError(e instanceof Error ? e.message : "Submission failed. Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    } else {
+      const nextIdx = currentTaskIndex + 1;
+      const resetParticipants = room.participants.map((p) => ({ ...p, uploadStatus: "idle" as const }));
+      // Reset signaling refs for new P2P state
+      answerHandledRef.current = false;
+      offerHandledRef.current = true; // keep true so secondary doesn't re-answer old offer
+      processedIcePrimaryRef.current.clear();
+      processedIceSecondaryRef.current.clear();
+      pendingIceRef.current = [];
+      await updateConversationRoomFields(roomId, {
+        taskIndex: nextIdx,
+        status: "recording",
+        participants: resetParticipants,
+      });
+    }
+  }
+
+  async function copyLink() {
+    const url = `${window.location.origin}/speakers?section=projects&roomId=${propRoomId}`;
+    await navigator.clipboard.writeText(url).catch(() => {});
+    setCopyDone(true);
+    setTimeout(() => setCopyDone(false), 2500);
+  }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      pcRef.current?.close();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Loading ────────────────────────────────────────────────────────────────
+  if (roomLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (!room || !project) {
+    return (
+      <div className="space-y-4">
+        <button type="button" onClick={onBack} className="text-sm font-medium text-muted hover:text-ink">← Back</button>
+        <p className="text-sm text-rose-600">{joinError ?? "Session not found."}</p>
+      </div>
+    );
+  }
+
+  const roomStatus = room.status;
+
+  // ── Done ──────────────────────────────────────────────────────────────────
+  if (roomStatus === "done") {
+    return (
+      <div className="space-y-5">
+        <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink">← My Projects</button>
+        <div className="flex flex-col items-center gap-4 rounded-[1.75rem] border border-emerald-200 bg-emerald-50 px-6 py-12 text-center">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl">✓</span>
+          <div>
+            <h1 className="text-xl font-semibold text-emerald-900">Session complete</h1>
+            <p className="mt-1.5 text-sm text-emerald-700">All recordings have been submitted for review.</p>
+          </div>
+          <button type="button" onClick={onBack} className="mt-2 rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
+            Back to projects
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Waiting room ──────────────────────────────────────────────────────────
+  if (roomStatus === "waiting") {
+    const inviteLink = typeof window !== "undefined"
+      ? `${window.location.origin}/speakers?section=projects&roomId=${room.id}`
+      : "";
+
+    return (
+      <div className="space-y-5">
+        <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink">← My Projects</button>
+
+        {/* Hero */}
+        <div className="relative overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-primary to-primaryStrong px-6 py-7">
+          <div className="relative z-10">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60">Conversational session</p>
+            <h1 className="mt-1 text-2xl font-semibold text-white">{project.name}</h1>
+            <p className="mt-2 text-sm text-white/70">
+              {project.tasks.length} task{project.tasks.length !== 1 ? "s" : ""} · {requiredSpeakers} speakers required
+            </p>
+          </div>
+          <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-white/10" />
+        </div>
+
+        {/* Participants */}
+        <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-3.5">
+            <p className="text-[13px] font-semibold text-ink">
+              Participants ({room.participants.length}/{requiredSpeakers})
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {room.participants.map((p) => (
+              <div key={p.uid} className="flex items-center gap-3 px-5 py-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                  {(p.name?.[0] ?? p.email[0] ?? "?").toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink">{p.name || p.email}</p>
+                  <p className="text-xs text-muted">{p.email}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {p.role === "primary" && (
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Host</span>
+                  )}
+                  <span className={["h-2 w-2 rounded-full", p.online ? "bg-emerald-400" : "bg-slate-300"].join(" ")} />
+                </div>
+              </div>
+            ))}
+            {Array.from({ length: Math.max(0, requiredSpeakers - room.participants.length) }).map((_, i) => (
+              <div key={`empty-${i}`} className="flex items-center gap-3 px-5 py-3 opacity-40">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-slate-300">
+                  <span className="text-slate-400">+</span>
+                </div>
+                <p className="text-sm text-muted">Waiting for speaker…</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Invite link (primary only) */}
+        {isPrimary && (
+          <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-3.5">
+              <p className="text-[13px] font-semibold text-ink">Invite other speakers</p>
+            </div>
+            <div className="space-y-3 p-5">
+              <p className="text-sm text-muted">Share this link with the other speaker(s). They must be signed in to the speaker portal.</p>
+              <div className="flex gap-2">
+                <div className="min-w-0 flex-1 overflow-hidden rounded-[0.75rem] border border-slate-200 bg-panelStrong px-3.5 py-2.5">
+                  <p className="truncate font-mono text-xs text-muted">{inviteLink}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void copyLink()}
+                  className="shrink-0 rounded-[0.75rem] bg-primary px-4 py-2.5 text-xs font-semibold text-white hover:bg-primaryStrong"
+                >
+                  {copyDone ? "Copied ✓" : "Copy"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Start / waiting */}
+        {isPrimary ? (
+          <div className="space-y-3">
+            {!allJoined && (
+              <p className="text-center text-sm text-muted">
+                Waiting for {requiredSpeakers - room.participants.length} more speaker{requiredSpeakers - room.participants.length !== 1 ? "s" : ""} to join…
+              </p>
+            )}
+            {webrtcError && <p className="text-center text-sm text-rose-600">{webrtcError}</p>}
+            <button
+              type="button"
+              disabled={!allJoined || localConnecting}
+              onClick={() => void handlePrimaryStart()}
+              className="w-full rounded-full bg-primary py-3.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-40"
+            >
+              {localConnecting ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  Connecting audio…
+                </span>
+              ) : "Start session →"}
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-[1.25rem] border border-slate-200 bg-white px-5 py-6 text-center">
+            <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+            <p className="mt-3 text-sm font-medium text-ink">You&apos;ve joined!</p>
+            <p className="mt-1 text-xs text-muted">Waiting for the host to start the session…</p>
+          </div>
+        )}
+
+        {joinError && <p className="text-center text-sm text-rose-600">{joinError}</p>}
+      </div>
+    );
+  }
+
+  // ── Recording / stopped phase ─────────────────────────────────────────────
+  const isRecording = roomStatus === "recording";
+  const isStopped = roomStatus === "stopped";
+  const canStop = isPrimary && isRecording && elapsed >= minSec;
+  const timerColor = elapsed >= maxSec * 0.9 ? "text-rose-500" : elapsed >= maxSec * 0.7 ? "text-amber-500" : "text-ink";
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium text-muted">Task {currentTaskIndex + 1} of {totalTasks}</p>
+          <h1 className="mt-0.5 text-xl font-semibold text-ink">{currentTask?.title ?? "Recording"}</h1>
+        </div>
+        <span className={[
+          "shrink-0 rounded-full px-3 py-1 text-xs font-semibold",
+          isRecording ? "bg-rose-100 text-rose-700 animate-pulse" : "bg-amber-100 text-amber-700",
+        ].join(" ")}>
+          {isRecording ? "● Recording" : "■ Stopped"}
+        </span>
+      </div>
+
+      {/* Participant upload status (stopped phase) */}
+      {isStopped && (
+        <div className="flex flex-wrap gap-2">
+          {room.participants.map((p) => (
+            <div key={p.uid} className={[
+              "flex items-center gap-1.5 rounded-full border px-3 py-1",
+              p.uploadStatus === "done" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white",
+            ].join(" ")}>
+              <span className={["h-2 w-2 rounded-full shrink-0", p.uploadStatus === "done" ? "bg-emerald-400" : p.uploadStatus === "uploading" ? "bg-amber-400 animate-pulse" : "bg-slate-300"].join(" ")} />
+              <span className="text-xs font-medium text-ink">{p.name?.split(" ")[0] ?? p.email}</span>
+              <span className="text-[10px] text-muted">{p.uploadStatus === "done" ? "✓ uploaded" : p.uploadStatus === "uploading" ? "uploading…" : "pending"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Prompt */}
+      {prompt && (
+        <div className="rounded-[1.25rem] border border-blue-100 bg-blue-50 p-4">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-primary">Prompt</p>
+          <p className="text-sm leading-7 text-ink">{prompt.text}</p>
+          <p className="mt-2 text-[11px] text-muted">Min {minSec}s · Max {maxSec}s</p>
+        </div>
+      )}
+
+      {/* 1-minute warning */}
+      {warnShown && isRecording && (
+        <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+          ⚠ Less than 1 minute remaining — start wrapping up naturally.
+        </div>
+      )}
+
+      {/* Remote audio (hidden — live call) */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
+      {/* Recorder UI */}
+      {isRecording && (
+        <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
+          <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
+            {formatDuration(elapsed)}
+          </p>
+          <div className="flex h-10 items-end gap-[2px]" aria-hidden="true">
+            {levelBars.map((h, i) => (
+              <div key={i} className="w-[3px] rounded-full bg-primary transition-all duration-75" style={{ height: `${Math.max(4, h)}%` }} />
+            ))}
+          </div>
+          <p className="animate-pulse text-xs text-muted">Recording… speak naturally</p>
+          {isPrimary ? (
+            <button
+              type="button"
+              onClick={() => void handlePrimaryStop()}
+              disabled={!canStop}
+              className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-600 text-xl text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 disabled:opacity-40 active:scale-95"
+            >
+              ⏹
+            </button>
+          ) : (
+            <div className="text-xs text-muted">Recording in progress — host will stop when done</div>
+          )}
+          {!canStop && isPrimary && (
+            <p className="text-xs text-muted">Minimum {minSec}s · {Math.max(0, minSec - elapsed)}s remaining before you can stop</p>
+          )}
+        </div>
+      )}
+
+      {/* Connecting spinner (waiting for WebRTC while room is recording) */}
+      {isRecording && localConnecting && (
+        <div className="flex items-center justify-center gap-2 rounded-[1rem] border border-slate-200 bg-white px-4 py-4">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+          <span className="text-sm text-muted">Setting up audio call…</span>
+        </div>
+      )}
+      {webrtcError && (
+        <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{webrtcError}</div>
+      )}
+
+      {/* Stopped: playback + upload */}
+      {isStopped && localBlob && (
+        <div className="space-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-4">
+          <p className="text-sm font-semibold text-ink">Your recording ({formatDuration(localBlob.duration)})</p>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio controls src={localBlob.url} className="w-full rounded-xl" />
+          {myUploadStatus === "idle" && (
+            <button
+              type="button"
+              onClick={() => void handleUpload()}
+              className="w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong"
+            >
+              Upload recording →
+            </button>
+          )}
+          {myUploadStatus === "uploading" && (
+            <div className="flex items-center justify-center gap-2 py-1">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+              <span className="text-sm text-muted">Uploading…</span>
+            </div>
+          )}
+          {myUploadStatus === "done" && (
+            <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2">
+              <span className="text-emerald-500">✓</span>
+              <span className="text-sm font-semibold text-emerald-900">Uploaded successfully</span>
+            </div>
+          )}
+          {myUploadStatus === "error" && uploadError && (
+            <div className="space-y-2">
+              <p className="text-sm text-rose-600">{uploadError}</p>
+              <button
+                type="button"
+                onClick={() => void handleUpload()}
+                className="w-full rounded-full border border-rose-200 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+              >
+                Retry upload
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Stopped with no local blob (joined late or mic failed) */}
+      {isStopped && !localBlob && myUploadStatus === "idle" && (
+        <div className="rounded-[1.25rem] border border-amber-200 bg-amber-50 px-5 py-4">
+          <p className="text-sm text-amber-800">No recording captured on your device.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setMyUploadStatus("done");
+              void updateConversationRoomParticipant(roomId, user.uid, { uploadStatus: "done" });
+            }}
+            className="mt-3 rounded-full border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
+          >
+            Skip and continue
+          </button>
+        </div>
+      )}
+
+      {/* Next task / submit (primary only, all must upload first) */}
+      {isStopped && isPrimary && (
+        <div className="space-y-2">
+          {!allUploaded && (
+            <p className="text-center text-xs text-muted">Waiting for all speakers to finish uploading…</p>
+          )}
+          <button
+            type="button"
+            disabled={!allUploaded || submitting}
+            onClick={() => void handleNextTask()}
+            className="w-full rounded-full bg-primary py-3.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-40"
+          >
+            {submitting ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                Submitting…
+              </span>
+            ) : isLastTask ? "Submit for review →" : `Next task →`}
+          </button>
+          {submitError && <p className="text-center text-sm text-rose-600">{submitError}</p>}
+        </div>
+      )}
+
+      {/* Secondary waiting for next task */}
+      {isStopped && !isPrimary && myUploadStatus === "done" && (
+        <div className="flex items-center justify-center gap-3 rounded-[1.25rem] border border-slate-200 bg-white px-5 py-4">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+          <span className="text-sm text-muted">Waiting for the host to advance…</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Speaker portal (logged-in) ───────────────────────────────────────────────
 
 function SpeakerPortal({ user }: { user: User }) {
@@ -2343,6 +3137,7 @@ function SpeakerPortal({ user }: { user: User }) {
 
   const rawSection = searchParams.get("section") ?? "dashboard";
   const section = (VALID_SECTIONS.includes(rawSection as SpeakerSection) ? rawSection : "dashboard") as SpeakerSection;
+  const roomIdParam = searchParams.get("roomId");
 
   const [speaker, setSpeaker] = useState<DCSpeaker | null>(null);
   const [speakerLoading, setSpeakerLoading] = useState(true);
@@ -2355,6 +3150,10 @@ function SpeakerPortal({ user }: { user: User }) {
   const [activeProjectLoading, setActiveProjectLoading] = useState(false);
   const [activeTask, setActiveTask] = useState<{ task: DCTaskTemplate; taskIndex: number; initialPromptIndex: number } | null>(null);
   const [pendingReRecord, setPendingReRecord] = useState<{ taskId: string; promptIndex: number } | null>(null);
+
+  // Secondary speaker: joining via roomId URL param
+  const [convRoom, setConvRoom] = useState<DCConversationRoom | null>(null);
+  const [convProject, setConvProject] = useState<DCProject | null>(null);
 
   function navigateTo(s: SpeakerSection) {
     // Reset project drill-down when switching sections
@@ -2404,6 +3203,19 @@ function SpeakerPortal({ user }: { user: User }) {
       setActiveProjectLoading(false);
     });
   }, [activeAssignment]);
+
+  // Secondary: subscribe to room when joining via roomId URL param
+  useEffect(() => {
+    if (!roomIdParam) return;
+    // If the user owns an assignment with this ID, treat as primary (handled normally)
+    if (assignments.some((a) => a.id === roomIdParam)) return;
+    return subscribeToConversationRoom(roomIdParam, setConvRoom);
+  }, [roomIdParam, assignments]);
+
+  useEffect(() => {
+    if (!convRoom) return;
+    return subscribeToDCProjectById(convRoom.projectId, setConvProject);
+  }, [convRoom?.projectId]);
 
   // Navigate to a specific task/prompt once the project loads (used by Reviews re-record)
   useEffect(() => {
@@ -2474,6 +3286,44 @@ function SpeakerPortal({ user }: { user: User }) {
   };
 
   function renderProjects() {
+    // Secondary speaker joining via roomId URL param
+    if (roomIdParam && !assignments.some((a) => a.id === roomIdParam)) {
+      return (
+        <ConversationalProjectView
+          user={user}
+          speaker={speakerForDisplay}
+          assignment={null}
+          project={convProject}
+          roomId={roomIdParam}
+          onBack={() => router.push("/speakers?section=projects")}
+        />
+      );
+    }
+
+    // Conversational project — primary with active assignment
+    if (activeAssignment) {
+      if (activeProjectLoading || !activeProject) {
+        return (
+          <div className="flex min-h-[40vh] items-center justify-center">
+            <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+          </div>
+        );
+      }
+      if (activeProject.recordingMode === "conversational") {
+        return (
+          <ConversationalProjectView
+            user={user}
+            speaker={speakerForDisplay}
+            assignment={activeAssignment}
+            project={activeProject}
+            roomId={activeAssignment.id}
+            onBack={() => { setActiveAssignment(null); setActiveTask(null); }}
+          />
+        );
+      }
+    }
+
+    // Utterance project — task view
     if (activeTask && activeAssignment && activeProject) {
       return (
         <TaskView
@@ -2497,6 +3347,8 @@ function SpeakerPortal({ user }: { user: User }) {
         />
       );
     }
+
+    // Utterance project — project overview
     if (activeAssignment) {
       if (activeProjectLoading || !activeProject) {
         return (
@@ -2516,6 +3368,7 @@ function SpeakerPortal({ user }: { user: User }) {
         />
       );
     }
+
     return <MyProjects assignments={assignments} onSelect={(a) => setActiveAssignment(a)} />;
   }
 
