@@ -9,7 +9,9 @@ import {
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  createUserWithEmailAndPassword,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
   signOut,
   type User,
 } from "firebase/auth";
@@ -17,9 +19,11 @@ import {
   DeaimerSiteShell,
   type PlatformSideMenuItem,
 } from "@/components/deaimer-site-shell";
+import { PlatformAuthPage } from "@/components/platform-auth-page";
 import {
   ensureFirebaseAuthPersistence,
   getFirebaseClientServices,
+  getFirebaseConfigError,
   isFirebaseConfigured,
   resolveFirebaseRedirectSignIn,
   signInWithGoogle,
@@ -28,7 +32,7 @@ import {
   subscribeToDCAssignmentsBySpeaker,
   subscribeToDCProjectById,
   subscribeToDCSessionsBySpeaker,
-  subscribeToDCSpeakerByEmail,
+  subscribeToDCSpeakerProfileByUid,
   submitAssignmentForReview,
   submitDCSession,
   updateDCSpeakerProfile,
@@ -2331,9 +2335,8 @@ function SpeakerPortal({ user }: { user: User }) {
   }
 
   useEffect(() => {
-    if (!user.email) return;
     setSpeakerLoading(true);
-    return subscribeToDCSpeakerByEmail(user.email, (s) => {
+    return subscribeToDCSpeakerProfileByUid(user.uid, (s) => {
       setSpeaker((prev) => {
         // Never let a stale snapshot degrade a complete profile back to incomplete
         if (prev && s && isProfileComplete(prev) && !isProfileComplete(s)) return prev;
@@ -2341,7 +2344,7 @@ function SpeakerPortal({ user }: { user: User }) {
       });
       setSpeakerLoading(false);
     });
-  }, [user.email]);
+  }, [user.uid]);
 
   useEffect(() => {
     if (!user.email) return;
@@ -2398,24 +2401,7 @@ function SpeakerPortal({ user }: { user: User }) {
     );
   }
 
-  if (!speaker) {
-    return (
-      <DeaimerSiteShell>
-        <div className="flex min-h-[60vh] flex-col items-center justify-center px-4 text-center">
-          <p className="text-2xl">◎</p>
-          <h1 className="mt-3 text-xl font-semibold text-ink">Account not found</h1>
-          <p className="mt-2 max-w-sm text-sm leading-6 text-muted">
-            Your Google account (<strong>{user.email}</strong>) is not registered as a speaker. Contact your project coordinator.
-          </p>
-          <button type="button" onClick={() => void handleSignOut()} className="mt-5 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
-            Sign out
-          </button>
-        </div>
-      </DeaimerSiteShell>
-    );
-  }
-
-  if (speaker.status === "suspended") {
+  if (speaker?.status === "suspended") {
     return (
       <DeaimerSiteShell>
         <div className="flex min-h-[60vh] flex-col items-center justify-center px-4 text-center">
@@ -2429,7 +2415,8 @@ function SpeakerPortal({ user }: { user: User }) {
     );
   }
 
-  const profileComplete = isProfileComplete(speaker);
+  const speakerForDisplay = speaker ?? createEmptySpeaker(user);
+  const profileComplete = isProfileComplete(speakerForDisplay);
   const effectiveSection: SpeakerSection = profileComplete ? section : "profile";
 
   const speakerMenuItems: PlatformSideMenuItem[] = profileComplete
@@ -2446,9 +2433,9 @@ function SpeakerPortal({ user }: { user: User }) {
 
   const userProfile = {
     name:
-      (speaker.firstName && speaker.lastName
-        ? `${speaker.firstName} ${speaker.lastName}`
-        : speaker.name) ||
+      (speakerForDisplay.firstName && speakerForDisplay.lastName
+        ? `${speakerForDisplay.firstName} ${speakerForDisplay.lastName}`
+        : speakerForDisplay.name) ||
       user.displayName ||
       user.email?.split("@")[0] ||
       "Speaker",
@@ -2461,7 +2448,7 @@ function SpeakerPortal({ user }: { user: User }) {
       return (
         <TaskView
           key={activeTask.taskIndex}
-          speaker={speaker!}
+          speaker={speakerForDisplay}
           assignment={activeAssignment}
           project={activeProject}
           taskIndex={activeTask.taskIndex}
@@ -2511,19 +2498,19 @@ function SpeakerPortal({ user }: { user: User }) {
       <main className="min-h-screen bg-background text-ink">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
           {effectiveSection === "dashboard" && (
-            <Dashboard speaker={speaker} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
+            <Dashboard speaker={speakerForDisplay} assignments={assignments} sessions={sessions} onNavigate={navigateTo} />
           )}
           {effectiveSection === "projects" && renderProjects()}
           {effectiveSection === "reviews" && (
             <Reviews
               assignments={assignments}
               sessions={sessions}
-              speaker={speaker}
+              speaker={speakerForDisplay}
             />
           )}
           {effectiveSection === "profile" && (
             <Profile
-            speaker={speaker}
+            speaker={speakerForDisplay}
             onSaved={(s) => {
               setSpeaker(s);
               if (!profileComplete) navigateTo("dashboard");
@@ -2540,19 +2527,57 @@ function SpeakerPortal({ user }: { user: User }) {
 
 // ─── Auth gate / sign-in ──────────────────────────────────────────────────────
 
+type SpeakerEmailMode = "signup" | "signin";
+const emptySpeakerEmailForm = { email: "", password: "", confirmPassword: "" };
+
+function createEmptySpeaker(user: User): DCSpeaker {
+  return {
+    id: user.uid,
+    email: user.email?.toLowerCase() ?? "",
+    firstName: "",
+    lastName: "",
+    name: user.displayName ?? "",
+    dateOfBirth: "",
+    age: "",
+    gender: "",
+    country: "",
+    region: "",
+    languages: [],
+    phoneCountryCode: "+1",
+    phone: "",
+    dialect: "",
+    secondaryDialect: "",
+    bio: "",
+    status: "pending",
+    totalHours: 0,
+    projectsCount: 0,
+    invitedByEmail: "",
+    invitedByUid: "",
+  };
+}
+
 export function SpeakersShell() {
   const [mounted, setMounted] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  const [isAuthResolving, setIsAuthResolving] = useState(false);
   const [user, setUser] = useState<User | null>(null);
-  const [signingIn, setSigningIn] = useState(false);
-  const [authError, setAuthError] = useState("");
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isEmailBusy, setIsEmailBusy] = useState(false);
+  const [emailMode, setEmailMode] = useState<SpeakerEmailMode>("signup");
+  const [emailForm, setEmailForm] = useState(emptySpeakerEmailForm);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const firebaseReady = isFirebaseConfigured();
+  const firebaseConfigError = getFirebaseConfigError();
 
   useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
-    if (!mounted || !isFirebaseConfigured()) { setAuthReady(true); return; }
+    if (!mounted || !firebaseReady) { setAuthReady(true); setIsAuthResolving(false); return; }
     let cancelled = false;
     async function init() {
+      setIsAuthResolving(true);
       try { await ensureFirebaseAuthPersistence(); await resolveFirebaseRedirectSignIn(); } catch (e) { console.warn("[Auth] redirect sign-in error:", e); }
       if (cancelled) return;
       const { auth } = getFirebaseClientServices();
@@ -2560,23 +2585,61 @@ export function SpeakersShell() {
         if (cancelled) return;
         setUser(u);
         setAuthReady(true);
+        setIsAuthResolving(false);
+        setIsSigningIn(false);
       });
       return unsub;
     }
     const unsubPromise = init();
     return () => { cancelled = true; unsubPromise.then((unsub) => unsub?.()); };
-  }, [mounted]);
+  }, [mounted, firebaseReady]);
 
   async function handleGoogleSignIn() {
-    setSigningIn(true);
-    setAuthError("");
+    if (!firebaseReady) return;
+    setIsSigningIn(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
     try {
       const { auth, googleProvider } = getFirebaseClientServices();
       await signInWithGoogle(auth, googleProvider);
     } catch (err) {
-      setAuthError(err instanceof Error ? err.message : "Sign in did not complete.");
+      setErrorMessage(err instanceof Error ? err.message : "Google sign in did not complete. Please try again.");
     } finally {
-      setSigningIn(false);
+      setIsSigningIn(false);
+    }
+  }
+
+  async function handleEmailAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!firebaseReady) return;
+    const email = emailForm.email.trim().toLowerCase();
+    if (!email) { setErrorMessage("Enter your email first."); return; }
+    if (!emailForm.password) { setErrorMessage("Enter your password first."); return; }
+    if (emailMode === "signup" && emailForm.password !== emailForm.confirmPassword) {
+      setErrorMessage("Passwords do not match.");
+      return;
+    }
+    setIsEmailBusy(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      await ensureFirebaseAuthPersistence();
+      const { auth } = getFirebaseClientServices();
+      if (emailMode === "signup") {
+        await createUserWithEmailAndPassword(auth, email, emailForm.password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, emailForm.password);
+      }
+      setEmailForm(emptySpeakerEmailForm);
+      setSuccessMessage(
+        emailMode === "signup"
+          ? "Account created. Finish your profile to continue."
+          : "Signed in successfully.",
+      );
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Sign in did not complete. Please try again.");
+    } finally {
+      setIsEmailBusy(false);
     }
   }
 
@@ -2591,36 +2654,43 @@ export function SpeakersShell() {
   if (user) return <SpeakerPortal user={user} />;
 
   return (
-    <DeaimerSiteShell>
-      <div className="flex min-h-[80vh] items-center justify-center px-4 py-12">
-        <div className="w-full max-w-[380px]">
-          <div className="mb-8 text-center">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">Speaker Portal</p>
-            <h1 className="mt-3 text-2xl font-semibold text-ink sm:text-3xl">Sign in to record</h1>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              Access your speaker workspace to record sessions, track progress, and manage your profile.
-            </p>
-          </div>
-
-          {authError && (
-            <div className="mb-5 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{authError}</div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => void handleGoogleSignIn()}
-            disabled={signingIn}
-            className="inline-flex w-full items-center justify-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-ink shadow-sm transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {signingIn ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /> : <GoogleMark />}
-            {signingIn ? "Opening Google…" : "Continue with Google"}
-          </button>
-
-          <p className="mt-5 text-center text-xs text-muted">
-            Only invited speakers can access this portal. Contact your project coordinator if you need access.
-          </p>
-        </div>
-      </div>
-    </DeaimerSiteShell>
+    <PlatformAuthPage
+      title={emailMode === "signup" ? "Join as a speaker" : "Sign in to your account"}
+      email={emailForm.email}
+      password={emailForm.password}
+      confirmPassword={emailMode === "signup" ? emailForm.confirmPassword : undefined}
+      passwordAutocomplete={emailMode === "signup" ? "new-password" : "current-password"}
+      submitLabel={emailMode === "signup" ? "Create account" : "Sign in"}
+      isSubmitting={isEmailBusy || isAuthResolving}
+      notice={!firebaseReady ? (firebaseConfigError ?? undefined) : undefined}
+      errorMessage={errorMessage ?? undefined}
+      successMessage={successMessage ?? undefined}
+      oauthAction={
+        <button
+          type="button"
+          onClick={() => void handleGoogleSignIn()}
+          disabled={!firebaseReady || isSigningIn || isAuthResolving || !authReady}
+          className="inline-flex w-full items-center justify-center gap-3 rounded-[10px] border border-[#e5ecf3] bg-white px-4 py-[13px] text-sm font-semibold text-[#0a1628] transition hover:bg-[#f6f9fc] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isSigningIn
+            ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#d0dbe8] border-t-[#2b85f0]" />
+            : <GoogleMark />}
+          {isSigningIn ? "Opening Google…" : "Continue with Google"}
+        </button>
+      }
+      secondaryAction={
+        <button
+          type="button"
+          onClick={() => setEmailMode(emailMode === "signup" ? "signin" : "signup")}
+          className="text-[13px] font-medium text-[#2b85f0] transition hover:text-[#1f6dd1] hover:underline"
+        >
+          {emailMode === "signup" ? "Already have an account?" : "Create an account"}
+        </button>
+      }
+      onEmailChange={(value) => setEmailForm((f) => ({ ...f, email: value }))}
+      onPasswordChange={(value) => setEmailForm((f) => ({ ...f, password: value }))}
+      onConfirmPasswordChange={(value) => setEmailForm((f) => ({ ...f, confirmPassword: value }))}
+      onSubmit={handleEmailAuth}
+    />
   );
 }

@@ -12,9 +12,11 @@ export async function POST(req: NextRequest) {
   const idToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!idToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  let uid: string;
   let email: string;
   try {
     const decoded = await adminAuth().verifyIdToken(idToken);
+    uid = decoded.uid;
     email = decoded.email?.trim().toLowerCase() ?? "";
     if (!email) throw new Error("No email in token");
   } catch {
@@ -23,12 +25,15 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json() as Record<string, unknown>;
 
-  const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  const updates: Record<string, unknown> = {
+    email,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
   for (const key of ALLOWED_FIELDS) {
     if (key in body) updates[key] = body[key];
   }
 
-  await adminFirestore().doc(`speakerAccess/${email}`).set(updates, { merge: true });
+  await adminFirestore().doc(`speakerProfiles/${uid}`).set(updates, { merge: true });
 
   return NextResponse.json({ ok: true });
 }

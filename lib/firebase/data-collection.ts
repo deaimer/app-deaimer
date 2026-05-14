@@ -498,6 +498,15 @@ export function subscribeToDCSpeakerByEmail(
   );
 }
 
+export function subscribeToDCSpeakerProfileByUid(
+  uid: string,
+  callback: (s: DCSpeaker | null) => void,
+) {
+  return onSnapshot(doc(db(), "speakerProfiles", uid), (snap) =>
+    callback(snap.exists() ? mapSpeaker(snap.data(), snap.id) : null),
+  );
+}
+
 export async function updateDCSpeakerStatus(email: string, status: DCSpeakerStatus) {
   await updateDoc(doc(db(), "speakerAccess", email.trim().toLowerCase()), {
     status,
