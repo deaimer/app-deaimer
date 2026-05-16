@@ -1735,6 +1735,264 @@ function getTimestampMs(createdAt: unknown): number {
   return 0;
 }
 
+function CandidateApplicationDrawer({
+  application,
+  onClose,
+  verifyingApplicationKey,
+  onVerifyApplication,
+  onUpdateStatus,
+  onDeleteApplication,
+  canManageStatuses,
+  canMarkMessageSent = false,
+}: {
+  application: GlobalWorkforceApplicationRecord;
+  onClose: () => void;
+  verifyingApplicationKey: string | null;
+  onVerifyApplication: (application: GlobalWorkforceJobApplication) => Promise<void>;
+  onUpdateStatus: (
+    application: Pick<GlobalWorkforceJobApplication, "jobId" | "uid" | "status">,
+    status: GlobalWorkforceApplicationStatus,
+  ) => Promise<void>;
+  onDeleteApplication?: (application: GlobalWorkforceApplicationRecord) => Promise<void>;
+  canManageStatuses: boolean;
+  canMarkMessageSent?: boolean;
+}) {
+  const [isDeleting, setIsDeleting] = useState(false);
+  const displayId = application.candidateDisplayId || generateCandidateDisplayId(application.uid);
+  const verifyKey = `${application.jobId}-${application.uid}`;
+  const isVerifying = verifyingApplicationKey === verifyKey;
+
+  useEffect(() => {
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  async function handleDelete() {
+    if (!onDeleteApplication) return;
+    if (!window.confirm(`Delete ${application.applicantName || "this candidate"}? This cannot be undone.`)) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteApplication(application);
+      onClose();
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  const candidateDetails = [
+    { label: "Candidate ID", value: `#${displayId}` },
+    { label: "Email", value: application.applicantEmail || "Not available" },
+    {
+      label: "Location",
+      value: [application.applicantCity, application.applicantCountry].filter(Boolean).join(", ") || "Not available",
+    },
+    { label: "Date of birth", value: application.applicantDateOfBirth || "Not available" },
+    { label: "Submitted", value: formatApplicationTimestamp(application.createdAt) },
+  ];
+  const jobDetails = [
+    { label: application.jobPipeline === "External" ? "External ID" : "Job ID", value: application.jobHumanId },
+    { label: "Title", value: application.jobTitle || "Not available" },
+    { label: "Status", value: application.jobStatus || "Not available" },
+    { label: "Country", value: application.jobCountry || "Not available" },
+    { label: "Workplace", value: application.jobWorkplace || "Not available" },
+    { label: "Type", value: application.jobType || "Not available" },
+    { label: "Seniority", value: application.jobSeniority || "Not available" },
+    { label: "Compensation", value: application.jobCompensation || "Not available" },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div
+        className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px]"
+        onClick={onClose}
+      />
+
+      {/* Panel: bottom sheet on mobile, right side panel on lg+ */}
+      <div className={[
+        "absolute flex flex-col overflow-hidden bg-white",
+        /* mobile: bottom sheet */
+        "bottom-0 left-0 right-0 max-h-[88vh] rounded-t-[1.5rem] shadow-[0_-20px_60px_rgba(10,22,40,0.22)]",
+        /* desktop: right panel */
+        "lg:bottom-0 lg:left-auto lg:right-0 lg:top-0 lg:h-full lg:w-[480px] lg:max-h-full lg:rounded-none lg:rounded-l-[1.5rem] lg:shadow-[-24px_0_60px_rgba(10,22,40,0.14)]",
+      ].join(" ")}>
+        {/* Mobile drag handle only */}
+        <div className="mx-auto mt-3 h-1 w-10 shrink-0 rounded-full bg-slate-200 lg:hidden" />
+
+        {/* Header */}
+        <div className="flex shrink-0 items-start justify-between gap-4 px-5 pb-4 pt-3 lg:pt-5">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+              Candidate
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold text-ink">
+                {application.applicantName || "Candidate"}
+              </h2>
+              <span className="font-mono text-sm font-bold text-primarySoft">#{displayId}</span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <ApplicationStatusBadge status={application.status} />
+              {application.jobPipeline === "External" ? (
+                <span className="rounded-full border border-slate-200 bg-panelStrong px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
+                  External
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Close"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+              <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-100 px-5 py-3">
+          {canManageStatuses ? (
+            <ApplicationStatusSelect
+              application={application}
+              isUpdating={isVerifying}
+              onChange={onUpdateStatus}
+            />
+          ) : canMarkMessageSent && (application.status === "applied" || application.status === "viewed") ? (
+            <button
+              type="button"
+              onClick={() => void onUpdateStatus(application, "message-sent")}
+              disabled={isVerifying}
+              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-900 transition hover:bg-sky-100 disabled:opacity-60"
+            >
+              {isVerifying ? "Updating..." : "Mark message sent"}
+            </button>
+          ) : null}
+          <WhatsAppCandidateAction
+            countryCode={application.applicantPhoneCountryCode}
+            phoneNumber={application.applicantPhoneNumber}
+            alwaysVisible
+          />
+          {application.status === "viewed" && canManageStatuses ? (
+            <button
+              type="button"
+              onClick={() => void onVerifyApplication(application)}
+              disabled={isVerifying}
+              className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-60"
+            >
+              {isVerifying ? "Marking..." : "Mark applied"}
+            </button>
+          ) : null}
+          {onDeleteApplication ? (
+            <button
+              type="button"
+              onClick={() => void handleDelete()}
+              disabled={isDeleting}
+              className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-900 transition hover:bg-rose-100 disabled:opacity-60"
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
+            </button>
+          ) : null}
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200">
+          <div className="space-y-5 px-5 py-5">
+            {/* Candidate details */}
+            <section>
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted">
+                Candidate details
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                {candidateDetails.map((item) => (
+                  <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-muted">{item.label}</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-ink">{item.value}</p>
+                  </div>
+                ))}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-muted">Phone</p>
+                  <div className="mt-1">
+                    <WhatsAppEditInline
+                      jobId={application.jobId}
+                      uid={application.uid}
+                      countryCode={application.applicantPhoneCountryCode}
+                      phoneNumber={application.applicantPhoneNumber}
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Job info */}
+            <section>
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted">
+                Job info · <span className="font-mono">{application.jobHumanId}</span>
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                {jobDetails.map((item) => (
+                  <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-muted">{item.label}</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-ink">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Documents */}
+            <section>
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted">
+                Documents
+              </p>
+              <div className="space-y-2">
+                {application.resumeFileUrl ? (
+                  <a
+                    href={application.resumeFileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-100"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 shrink-0 text-emerald-600">
+                      <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                    <span className="truncate">{application.resumeFileName || "Open resume"}</span>
+                  </a>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-panelStrong px-4 py-3 text-sm text-muted">
+                    No resume submitted.
+                  </div>
+                )}
+                {application.profileLink ? (
+                  <a
+                    href={application.profileLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-3 rounded-xl border border-slate-200 bg-panelStrong px-4 py-3 text-sm transition hover:bg-slate-100"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 shrink-0 text-slate-400">
+                      <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                      <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                    </svg>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-ink">Profile link</span>
+                      <span className="block truncate text-xs text-primary">{application.profileLink}</span>
+                    </span>
+                  </a>
+                ) : null}
+              </div>
+            </section>
+          </div>
+          <div className="h-8" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GlobalWorkforceCandidatesSection({
   applications,
   verifyingApplicationKey,
@@ -1745,6 +2003,7 @@ function GlobalWorkforceCandidatesSection({
   errorMessage,
   successMessage,
   canManageStatuses,
+  canMarkMessageSent = false,
   approvedAdmins,
   mode = "candidates",
 }: {
@@ -1760,10 +2019,11 @@ function GlobalWorkforceCandidatesSection({
   errorMessage?: string | null;
   successMessage?: string | null;
   canManageStatuses: boolean;
+  canMarkMessageSent?: boolean;
   approvedAdmins?: AdminApprovalRecord[];
   mode?: "candidates" | "signups";
 }) {
-  const [deletingApplicationKey, setDeletingApplicationKey] = useState<string | null>(null);
+  const [drawerApplication, setDrawerApplication] = useState<GlobalWorkforceApplicationRecord | null>(null);
   const [candidateSearchQuery, setCandidateSearchQuery] = useState("");
   const [candidateCountryFilter, setCandidateCountryFilter] = useState("all");
   const [candidateUserFilter, setCandidateUserFilter] = useState("all");
@@ -2101,6 +2361,18 @@ function GlobalWorkforceCandidatesSection({
                     ))}
                   </select>
                   <select
+                    value={candidateJobFilter}
+                    onChange={(event) => setCandidateJobFilter(event.target.value)}
+                    className={filterInputClassName(candidateJobFilter !== "all", "min-w-[220px]")}
+                  >
+                    <option value="all">Job post</option>
+                    {candidateJobOptions.map(([jobId, label]) => (
+                      <option key={jobId} value={jobId}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
                     value={candidateUserFilter}
                     onChange={(event) => setCandidateUserFilter(event.target.value)}
                     className={filterInputClassName(candidateUserFilter !== "all", "min-w-[220px]")}
@@ -2170,18 +2442,6 @@ function GlobalWorkforceCandidatesSection({
                       </option>
                     ))}
                   </select>
-                  <select
-                    value={candidateJobFilter}
-                    onChange={(event) => setCandidateJobFilter(event.target.value)}
-                    className={filterInputClassName(candidateJobFilter !== "all", "min-w-[220px]")}
-                  >
-                    <option value="all">Job post</option>
-                    {candidateJobOptions.map(([jobId, label]) => (
-                      <option key={jobId} value={jobId}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
                   <button
                     type="button"
                     onClick={clearCandidateFilters}
@@ -2203,9 +2463,9 @@ function GlobalWorkforceCandidatesSection({
               </button>
             </div>
           </div>
-          <div className="grid border-b border-slate-100 bg-slate-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted md:grid-cols-[1fr_auto]">
-            <span>User · Name · Email</span>
-            <span className="hidden text-right md:block">Job · Title · Submitted</span>
+          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
+            <span>ID · Candidate</span>
+            <span className="hidden sm:block">Job ID · Status</span>
           </div>
           <div className="divide-y divide-slate-100">
             {filteredApplications.length === 0 ? (
@@ -2217,124 +2477,66 @@ function GlobalWorkforceCandidatesSection({
               const displayId =
                 application.candidateDisplayId ||
                 generateCandidateDisplayId(application.uid);
-              const verifyKey = `${application.jobId}-${application.uid}`;
               const detailKey = `${application.jobDocumentId || application.jobId}-${application.uid}`;
-              const isVerifying = verifyingApplicationKey === verifyKey;
 
               return (
                 <article
                   key={detailKey}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onOpenApplication(application)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
+                  onClick={() => {
+                    if (mode === "candidates") {
+                      setDrawerApplication(application);
+                    } else {
                       onOpenApplication(application);
                     }
                   }}
-                  className="group cursor-pointer px-4 py-2.5 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      if (mode === "candidates") {
+                        setDrawerApplication(application);
+                      } else {
+                        onOpenApplication(application);
+                      }
+                    }
+                  }}
+                  className="group flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30"
                 >
-                  <div className="flex items-center justify-between gap-3 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="shrink-0 font-mono text-[11px] font-bold text-primarySoft">
-                        #{displayId}
-                      </span>
-                      <span className="font-semibold text-sm text-ink truncate">
-                        {application.applicantName || "Candidate"}
-                      </span>
-                      <span className="text-xs text-muted truncate hidden sm:block">
-                        {application.applicantEmail}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <WhatsAppCandidateAction
-                        countryCode={application.applicantPhoneCountryCode}
-                        phoneNumber={application.applicantPhoneNumber}
-                      />
-                      <ApplicationStatusBadge status={application.status} />
-                      {canManageStatuses ? (
-                        <span className="hidden sm:block">
-                          <ApplicationStatusSelect
-                            application={application}
-                            isUpdating={isVerifying}
-                            onChange={onUpdateStatus}
-                          />
-                        </span>
-                      ) : null}
-                      {application.status === "viewed" ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void onVerifyApplication(application);
-                          }}
-                          disabled={isVerifying}
-                          className="hidden sm:inline-flex items-center justify-center rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isVerifying ? "..." : "Mark applied"}
-                        </button>
-                      ) : null}
-                      {onDeleteApplication ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            const key = `${application.jobDocumentId || application.jobId}-${application.uid}`;
-                            if (deletingApplicationKey === key) return;
-                            if (!window.confirm(`Delete ${application.applicantName || "this candidate"}? This cannot be undone.`)) return;
-                            setDeletingApplicationKey(key);
-                            void onDeleteApplication(application).finally(() => setDeletingApplicationKey(null));
-                          }}
-                          disabled={deletingApplicationKey === `${application.jobDocumentId || application.jobId}-${application.uid}`}
-                          className="hidden sm:inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-semibold text-rose-900 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {deletingApplicationKey === `${application.jobDocumentId || application.jobId}-${application.uid}` ? "..." : "Delete"}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-                    <span className="font-mono font-semibold text-ink shrink-0">
-                      {application.jobHumanId}
-                    </span>
-                    {application.jobPipeline === "External" ? (
-                      <span className="rounded-full border border-slate-200 bg-panelStrong px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
-                        External
-                      </span>
-                    ) : null}
-                    <span className="text-slate-300">·</span>
-                    <span className="font-medium text-ink truncate max-w-[200px]">
-                      {application.jobTitle}
-                    </span>
-                    <span className="text-slate-300 hidden sm:block">·</span>
-                    <span className="hidden sm:block shrink-0">
-                      {formatApplicationTimestamp(application.createdAt)}
-                    </span>
-                    {application.jobAssignedAdminEmails?.length > 0 && approvedAdmins && approvedAdmins.length > 0 ? (
-                      <>
-                        <span className="text-slate-300 hidden sm:block">·</span>
-                        <span className="hidden sm:block shrink-0 text-primary/70">
-                          {application.jobAssignedAdminEmails
-                            .map((email) => approvedAdmins.find((a) => a.email === email)?.contactName || email)
-                            .join(", ")}
-                        </span>
-                      </>
-                    ) : null}
-                    <span className="text-slate-300">·</span>
-                    <WhatsAppEditInline
-                      jobId={application.jobId}
-                      uid={application.uid}
-                      countryCode={application.applicantPhoneCountryCode}
-                      phoneNumber={application.applicantPhoneNumber}
-                    />
-                  </div>
+                  <span className="shrink-0 font-mono text-[11px] font-bold text-primarySoft">
+                    #{displayId}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+                    {application.applicantName || "Candidate"}
+                  </span>
+                  <span className="hidden shrink-0 max-w-[180px] truncate text-xs text-muted sm:block">
+                    {application.applicantEmail}
+                  </span>
+                  <span className="hidden shrink-0 font-mono text-[11px] text-muted sm:block">
+                    {application.jobHumanId}
+                  </span>
+                  <ApplicationStatusBadge status={application.status} />
+                  <svg className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                  </svg>
                 </article>
               );
             })}
           </div>
         </section>
       )}
+      {drawerApplication ? (
+        <CandidateApplicationDrawer
+          application={drawerApplication}
+          onClose={() => setDrawerApplication(null)}
+          verifyingApplicationKey={verifyingApplicationKey}
+          onVerifyApplication={onVerifyApplication}
+          onUpdateStatus={onUpdateStatus}
+          onDeleteApplication={onDeleteApplication}
+          canManageStatuses={canManageStatuses}
+          canMarkMessageSent={canMarkMessageSent}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3617,12 +3819,14 @@ export function GlobalWorkforceAdminPanel({
   routeBase = "/admin?service=global-managed-workforce",
   canManageJobs = true,
   canApproveCommissions = false,
+  isSuperAdmin = false,
 }: {
   activeUser: User;
   activeSection: GlobalWorkforceAdminSection;
   routeBase?: string;
   canManageJobs?: boolean;
   canApproveCommissions?: boolean;
+  isSuperAdmin?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -3868,7 +4072,12 @@ export function GlobalWorkforceAdminPanel({
     application: Pick<GlobalWorkforceJobApplication, "jobId" | "uid" | "status">,
     status: GlobalWorkforceApplicationStatus,
   ) {
-    if (!canManageJobs || application.status === status) {
+    if (application.status === status) return;
+    const isRestrictedMessageSent =
+      !isSuperAdmin &&
+      status === "message-sent" &&
+      (application.status === "applied" || application.status === "viewed");
+    if (!canManageJobs && !isRestrictedMessageSent) {
       return;
     }
 
@@ -4020,6 +4229,7 @@ export function GlobalWorkforceAdminPanel({
           errorMessage={applicationsError || errorMessage}
           successMessage={successMessage}
           canManageStatuses={canManageJobs}
+          canMarkMessageSent={!isSuperAdmin}
           approvedAdmins={canManageJobs ? approvedAdmins : undefined}
         />
       )

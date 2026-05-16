@@ -255,12 +255,57 @@ function resolveExternalApplyLink(referralLink: string, externalJobId: string) {
 
 const candidatePlatformMenuItems: PlatformSideMenuItem[] = [
   { label: "Work", isSectionHeader: true },
-  { label: "Jobs", href: "/candidates/jobs" },
-  { label: "Applications", href: "/candidates/applications" },
-  { label: "Saved roles", href: "/candidates/saved-roles" },
+  {
+    label: "Jobs",
+    href: "/candidates/jobs",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="7" width="20" height="14" rx="2" />
+        <path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" />
+      </svg>
+    ),
+  },
+  {
+    label: "Applications",
+    href: "/candidates/applications",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+        <rect x="9" y="3" width="6" height="4" rx="1" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    label: "Saved roles",
+    href: "/candidates/saved-roles",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />
+      </svg>
+    ),
+  },
   { label: "Personal", isSectionHeader: true },
-  { label: "Profile", href: "/candidates/profile" },
-  { label: "Settings", href: "/candidates/settings" },
+  {
+    label: "Profile",
+    href: "/candidates/profile",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 20a8 8 0 0 1 16 0" />
+      </svg>
+    ),
+  },
+  {
+    label: "Settings",
+    href: "/candidates/settings",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    ),
+  },
 ];
 
 type CandidatePlaceholderCard = {
@@ -1264,12 +1309,19 @@ export function CandidatePortal({
   const [viewedExternalJobIds, setViewedExternalJobIds] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [candidateTheme, setCandidateTheme] = useState<"light" | "dark">("light");
   const jobFiltersScrollRef = useRef<HTMLDivElement | null>(null);
   const mirroredApplicationKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setHasMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!hasMounted || typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("deaimer-candidate-theme");
+    if (stored === "dark" || stored === "light") setCandidateTheme(stored);
+  }, [hasMounted]);
 
   useEffect(() => {
     if (!hasMounted || typeof window === "undefined") {
@@ -1984,6 +2036,13 @@ export function CandidatePortal({
     );
   }
 
+  function handleThemeChange(theme: "light" | "dark") {
+    setCandidateTheme(theme);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("deaimer-candidate-theme", theme);
+    }
+  }
+
   async function handleExternalApplyClick(
     event: MouseEvent<HTMLAnchorElement>,
     job: GlobalWorkforceJobPost,
@@ -2180,6 +2239,25 @@ export function CandidatePortal({
     );
   }, [filteredJobs]);
 
+  const themeClass = candidateTheme === "dark" ? "cand-dark" : "";
+
+  function shell(content: ReactNode): ReactNode {
+    const siteShell = (
+      <DeaimerSiteShell
+        platformSideMenuItems={candidateShellSideMenuItems}
+        userProfile={candidateShellUserProfile}
+        onSignOut={() => void handleSignOut()}
+        themeToggle={{
+          theme: candidateTheme,
+          onToggle: () => handleThemeChange(candidateTheme === "dark" ? "light" : "dark"),
+        }}
+      >
+        {content}
+      </DeaimerSiteShell>
+    );
+    return themeClass ? <div className={themeClass}>{siteShell}</div> : siteShell;
+  }
+
   function renderCandidateWorkspacePage({
     eyebrow,
     title,
@@ -2195,104 +2273,80 @@ export function CandidatePortal({
     primaryActionHref?: string;
     primaryActionLabel?: string;
   }) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
-            {errorMessage ? (
-              <div className="mb-6 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
-                {errorMessage}
-              </div>
-            ) : null}
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
+          {errorMessage ? (
+            <div className="mb-6 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
+              {errorMessage}
+            </div>
+          ) : null}
 
-            {successMessage ? (
-              <div className="mb-6 rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm leading-7 text-emerald-900">
-                {successMessage}
-              </div>
-            ) : null}
+          {successMessage ? (
+            <div className="mb-6 rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm leading-7 text-emerald-900">
+              {successMessage}
+            </div>
+          ) : null}
 
-            {children}
-          </div>
-        </main>
-      </DeaimerSiteShell>
+          {children}
+        </div>
+      </main>
     );
   }
 
   if (!hasMounted) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto flex min-h-[70vh] max-w-6xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-            <div className="rounded-[1.25rem] border border-slate-200 bg-white px-6 py-5 text-sm text-muted">
-              Preparing candidate portal...
-            </div>
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto flex min-h-[70vh] max-w-6xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
+          <div className="rounded-[1.25rem] border border-slate-200 bg-white px-6 py-5 text-sm text-muted">
+            Preparing candidate portal...
           </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
   if (isWorkspaceView && (!authReady || isAuthResolving)) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-            <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
-              <div className="flex items-center gap-3 text-sm text-muted">
-                <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
-                <span>Opening your candidate workspace...</span>
-              </div>
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
+            <div className="flex items-center gap-3 text-sm text-muted">
+              <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
+              <span>Opening your candidate workspace...</span>
             </div>
           </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
   if (isWorkspaceView && !activeUser) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-            <section className="w-full max-w-2xl rounded-[1.75rem] border border-slate-200 bg-white p-8 shadow-panel">
-              <p className="text-xs font-semibold uppercase tracking-[0.26em] text-primarySoft">
-                Candidate workspace
-              </p>
-              <h1 className="mt-4 text-4xl font-semibold leading-tight text-ink">
-                Sign in to open your candidate workspace
-              </h1>
-              <p className="mt-5 text-base leading-8 text-muted">
-                Your jobs, applications, messages, and profile tools are available after
-                you sign in and complete your candidate profile.
-              </p>
-              <div className="mt-7 flex flex-wrap gap-3">
-                <a
-                  href="/candidates"
-                  className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-primaryStrong"
-                >
-                  Go to candidate sign in
-                </a>
-              </div>
-            </section>
-          </div>
-        </main>
-      </DeaimerSiteShell>
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
+          <section className="w-full max-w-2xl rounded-[1.75rem] border border-slate-200 bg-white p-8 shadow-panel">
+            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-primarySoft">
+              Candidate workspace
+            </p>
+            <h1 className="mt-4 text-4xl font-semibold leading-tight text-ink">
+              Sign in to open your candidate workspace
+            </h1>
+            <p className="mt-5 text-base leading-8 text-muted">
+              Your jobs, applications, messages, and profile tools are available after
+              you sign in and complete your candidate profile.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <a
+                href="/candidates"
+                className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+              >
+                Go to candidate sign in
+              </a>
+            </div>
+          </section>
+        </div>
+      </main>
     );
   }
 
@@ -2302,23 +2356,17 @@ export function CandidatePortal({
     activeUser &&
     !isCurrentUserProfileResolved
   ) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-            <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
-              <div className="flex items-center gap-3 text-sm text-muted">
-                <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
-                <span>Opening your candidate workspace...</span>
-              </div>
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
+            <div className="flex items-center gap-3 text-sm text-muted">
+              <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
+              <span>Opening your candidate workspace...</span>
             </div>
           </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
@@ -2329,23 +2377,17 @@ export function CandidatePortal({
     isCurrentUserProfileResolved &&
     !profile
   ) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-            <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
-              <div className="flex items-center gap-3 text-sm text-muted">
-                <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
-                <span>Finish your candidate profile to continue...</span>
-              </div>
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto flex min-h-[70vh] max-w-5xl items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5">
+            <div className="flex items-center gap-3 text-sm text-muted">
+              <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
+              <span>Finish your candidate profile to continue...</span>
             </div>
           </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
@@ -2472,18 +2514,13 @@ export function CandidatePortal({
   }
 
   if (isJobDetailView && activeUser) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
-            {/* Page-level back link — always at the top */}
-            <div className="mb-5">
-              <Link
-                href="/candidates/jobs"
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
+          {/* Page-level back link — always at the top */}
+          <div className="mb-5">
+            <Link
+              href="/candidates/jobs"
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink"
               >
                 <span aria-hidden="true">←</span>
@@ -2541,21 +2578,15 @@ export function CandidatePortal({
                 onToggleSave={() => toggleSavedJob(selectedCandidateJob.id)}
               />
             ) : null}
-          </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
   if (isJobsView && !selectedJobId && activeUser) {
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="lg:mx-auto lg:max-w-[1440px] lg:px-6 lg:py-8 xl:px-10">
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="lg:mx-auto lg:max-w-[1440px] lg:px-6 lg:py-8 xl:px-10">
             {errorMessage ? (
               <div className="mx-4 mb-4 mt-4 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900 lg:mx-0 lg:mb-6 lg:mt-0">
                 {errorMessage}
@@ -2895,8 +2926,7 @@ export function CandidatePortal({
               </div>
             </div>
           ) : null}
-        </main>
-      </DeaimerSiteShell>
+      </main>
     );
   }
 
@@ -2909,18 +2939,13 @@ export function CandidatePortal({
         )
       : "";
 
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto max-w-[900px] px-4 py-8 sm:px-6 lg:px-10">
-            {isJobsLoading && !selectedCandidateJob ? (
-              <div className="flex items-center gap-3 rounded-[1rem] border border-slate-200 bg-white px-4 py-4 text-sm text-muted shadow-panel">
-                <LoadingSpinner className="h-4 w-4 border-primary/30 border-t-primary" />
-                <span>Loading job details...</span>
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto max-w-[900px] px-4 py-8 sm:px-6 lg:px-10">
+          {isJobsLoading && !selectedCandidateJob ? (
+            <div className="flex items-center gap-3 rounded-[1rem] border border-slate-200 bg-white px-4 py-4 text-sm text-muted shadow-panel">
+              <LoadingSpinner className="h-4 w-4 border-primary/30 border-t-primary" />
+              <span>Loading job details...</span>
               </div>
             ) : null}
 
@@ -3113,23 +3138,17 @@ export function CandidatePortal({
                 ) : null}
               </section>
             ) : null}
-          </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
   if (isJobApplyView && activeUser) {
     const selectedCandidateJob = selectedJobId ? jobs.find((job) => job.id === selectedJobId) ?? null : null;
 
-    return (
-      <DeaimerSiteShell
-        platformSideMenuItems={candidateShellSideMenuItems}
-        userProfile={candidateShellUserProfile}
-        onSignOut={() => void handleSignOut()}
-      >
-        <main className="min-h-screen bg-background text-ink">
-          <div className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6 lg:px-10">
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6 lg:px-10">
             {errorMessage ? (
               <div className="mb-6 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
                 {errorMessage}
@@ -3181,9 +3200,8 @@ export function CandidatePortal({
                 isApplied={appliedJobIds.has(selectedCandidateJob.id)}
               />
             ) : null}
-          </div>
-        </main>
-      </DeaimerSiteShell>
+        </div>
+      </main>
     );
   }
 
@@ -3488,20 +3506,51 @@ export function CandidatePortal({
       title: "Account settings",
       description: "Manage your candidate account preferences and data.",
       children: (
-        <div className="mt-6 rounded-[1.5rem] border border-rose-200 bg-rose-50 p-6">
-          <p className="text-sm font-semibold text-rose-800">Delete account</p>
-          <p className="mt-2 text-sm leading-6 text-rose-700">
-            Permanently remove your profile, applications, and uploaded files. This cannot be undone.
-          </p>
-          <div className="mt-4">
+        <div className="space-y-5">
+          {/* Appearance — toggle lives in the sidebar */}
+          <div className="flex items-center justify-between rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-panel">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                {candidateTheme === "dark" ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m8.66-9h-1M4.34 12h-1m15.07-6.07-.707.707M5.636 18.364l-.707.707m12.728 0-.707-.707M5.636 5.636l-.707-.707M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
+                  </svg>
+                )}
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-ink">Appearance</p>
+                <p className="text-xs text-muted">{candidateTheme === "dark" ? "Dark mode" : "Light mode"}</p>
+              </div>
+            </div>
             <button
               type="button"
-              onClick={() => void handleDeleteProfile()}
-              disabled={isDeletingProfile}
-              className="rounded-full border border-rose-300 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => handleThemeChange(candidateTheme === "dark" ? "light" : "dark")}
+              className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
             >
-              {isDeletingProfile ? "Deleting..." : "Delete account"}
+              {candidateTheme === "dark" ? "Switch to Light" : "Switch to Dark"}
             </button>
+          </div>
+
+          {/* Danger zone */}
+          <div className="rounded-[1.5rem] border border-rose-200 bg-rose-50 p-6">
+            <p className="text-sm font-semibold text-rose-800">Delete account</p>
+            <p className="mt-2 text-sm leading-6 text-rose-700">
+              Permanently remove your profile, applications, and uploaded files. This cannot be undone.
+            </p>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => void handleDeleteProfile()}
+                disabled={isDeletingProfile}
+                className="rounded-full border border-rose-300 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDeletingProfile ? "Deleting..." : "Delete account"}
+              </button>
+            </div>
           </div>
         </div>
       ),
@@ -3606,13 +3655,8 @@ export function CandidatePortal({
     );
   }
 
-  return (
-    <DeaimerSiteShell
-      platformSideMenuItems={candidateShellSideMenuItems}
-      userProfile={candidateShellUserProfile}
-      onSignOut={() => void handleSignOut()}
-    >
-      <main className="min-h-screen bg-background text-ink">
+  return shell(
+    <main className="min-h-screen bg-background text-ink">
         <div
           className={[
             "mx-auto min-h-[70vh] px-4 py-10 sm:px-6 lg:px-10",
@@ -4111,6 +4155,5 @@ export function CandidatePortal({
           </section>
         </div>
       </main>
-    </DeaimerSiteShell>
   );
 }

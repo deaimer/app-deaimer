@@ -1864,6 +1864,7 @@ export function SuperAdminPortal({
   const firebaseReady = isFirebaseConfigured();
   const firebaseConfigError = getFirebaseConfigError();
 
+  const [superTheme, setSuperTheme] = useState<"light" | "dark">("light");
   const [hasMounted, setHasMounted] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [activeUser, setActiveUser] = useState<User | null>(null);
@@ -1897,6 +1898,16 @@ export function SuperAdminPortal({
         .filter((employeeId) => /^\d{5}$/.test(employeeId)),
     [adminApprovals],
   );
+
+  useEffect(() => {
+    const saved = localStorage.getItem("deaimer-super-theme");
+    if (saved === "dark" || saved === "light") setSuperTheme(saved);
+  }, []);
+
+  function handleSuperThemeChange(theme: "light" | "dark") {
+    setSuperTheme(theme);
+    localStorage.setItem("deaimer-super-theme", theme);
+  }
 
   useEffect(() => {
     setHasMounted(true);
@@ -2512,8 +2523,15 @@ export function SuperAdminPortal({
     );
   }
 
-  return (
-    <DeaimerSiteShell platformSideMenuItems={platformSideMenuItems}>
+  const superThemeClass = superTheme === "dark" ? "cand-dark" : "";
+  const superShell = (
+    <DeaimerSiteShell
+      platformSideMenuItems={platformSideMenuItems}
+      themeToggle={{
+        theme: superTheme,
+        onToggle: () => handleSuperThemeChange(superTheme === "dark" ? "light" : "dark"),
+      }}
+    >
       <main className="min-h-screen bg-background text-ink">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
           <div className="space-y-6">
@@ -2564,6 +2582,7 @@ export function SuperAdminPortal({
                   activeSection={activeWorkforceSection}
                   routeBase="/super?view=workforce"
                   canManageJobs
+                  isSuperAdmin
                 />
               )
             ) : activeView === "data-collection" ? (
@@ -2587,4 +2606,5 @@ export function SuperAdminPortal({
       </main>
     </DeaimerSiteShell>
   );
+  return superThemeClass ? <div className={superThemeClass}>{superShell}</div> : superShell;
 }

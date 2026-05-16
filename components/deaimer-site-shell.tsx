@@ -36,6 +36,7 @@ export type PlatformSideMenuItem = {
   active?: boolean;
   children?: PlatformSideMenuItem[];
   isSectionHeader?: boolean;
+  icon?: ReactNode;
 };
 
 type PlatformUserProfile = {
@@ -145,12 +146,14 @@ export function DeaimerSiteShell({
   platformSideMenuTitle = "Menu",
   userProfile,
   onSignOut,
+  themeToggle,
 }: {
   children: ReactNode;
   platformSideMenuItems?: PlatformSideMenuItem[];
   platformSideMenuTitle?: string;
   userProfile?: PlatformUserProfile;
   onSignOut?: () => void;
+  themeToggle?: { theme: "light" | "dark"; onToggle: () => void };
 }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [authUserProfile, setAuthUserProfile] = useState<PlatformUserProfile | null>(userProfile ?? null);
@@ -255,7 +258,15 @@ export function DeaimerSiteShell({
                 alt="Deaimer"
                 width={130}
                 height={22}
-                className="h-[18px] w-auto"
+                className="cand-light-logo h-[18px] w-auto"
+                priority
+              />
+              <Image
+                src="/reference-site/deaimer-logo-dark-.png"
+                alt="Deaimer"
+                width={130}
+                height={22}
+                className="cand-dark-logo hidden h-[18px] w-auto"
                 priority
               />
             </Link>
@@ -275,7 +286,7 @@ export function DeaimerSiteShell({
             className="relative flex-1 overflow-visible"
             onMouseLeave={() => setHoveredSideMenuLabel(null)}
           >
-            <div ref={sideMenuListRef} className="h-full overflow-y-auto px-2 py-2">
+            <div ref={sideMenuListRef} className="h-full overflow-y-auto px-2 py-2 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
               {platformSideMenuItems?.map((item) => {
                 if (item.isSectionHeader) {
                   return (
@@ -294,12 +305,15 @@ export function DeaimerSiteShell({
                 if (hasChildren) {
                   const trigger = (
                     <>
-                      <span>{item.label}</span>
-                      <span className="text-[10px] text-slate-400">›</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        {item.icon ? <span className="shrink-0 opacity-60">{item.icon}</span> : null}
+                        <span className="truncate">{item.label}</span>
+                      </span>
+                      <span className="ml-auto shrink-0 text-[10px] text-slate-400">›</span>
                     </>
                   );
                   const triggerClass = [
-                    "flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition",
+                    "flex w-full items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium transition",
                     isActive ? "bg-[#eef4fb] text-[#1a6cd4]" : "text-slate-700 hover:bg-slate-100 hover:text-slate-900",
                   ].join(" ");
 
@@ -349,10 +363,11 @@ export function DeaimerSiteShell({
                     onMouseEnter={() => setHoveredSideMenuLabel(null)}
                     onFocus={() => setHoveredSideMenuLabel(null)}
                     className={[
-                      "flex items-center rounded-lg px-3 py-2 text-sm font-medium transition",
+                      "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
                       isActive ? "bg-[#eef4fb] text-[#1a6cd4]" : "text-slate-700 hover:bg-slate-100 hover:text-slate-900",
                     ].join(" ")}
                   >
+                    {item.icon ? <span className="shrink-0 opacity-60">{item.icon}</span> : null}
                     {item.label}
                   </Link>
                 ) : (
@@ -429,14 +444,16 @@ export function DeaimerSiteShell({
             ) : null}
           </div>
 
-          {/* Bottom: profile + sign out */}
+          {/* Bottom: profile → divider → theme toggle → sign out */}
           {resolvedUserProfile || onSignOut || authUserProfile ? (
-            <div className="border-t border-slate-200 px-2 py-2.5">
+            <div className="border-t border-slate-200 px-2 py-2.5 space-y-1">
+
+              {/* Profile row */}
               {resolvedUserProfile ? (
                 <Link
                   href={resolvedUserProfile.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition hover:bg-slate-100"
+                  className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition hover:bg-slate-100"
                 >
                   <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#0b4f73] text-xs font-semibold text-white">
                     {resolvedUserProfile.imageUrl ? (
@@ -452,15 +469,66 @@ export function DeaimerSiteShell({
                   </div>
                 </Link>
               ) : null}
+
+              {/* Divider */}
+              {resolvedUserProfile && (themeToggle || onSignOut) ? (
+                <div className="mx-1 my-0.5 h-px bg-slate-100" />
+              ) : null}
+
+              {/* Theme toggle */}
+              {themeToggle ? (
+                <button
+                  type="button"
+                  onClick={themeToggle.onToggle}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition hover:border-slate-300 hover:bg-slate-100"
+                >
+                  <span className="flex items-center gap-2.5">
+                    {themeToggle.theme === "dark" ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px] shrink-0 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m8.66-9h-1M4.34 12h-1m15.07-6.07-.707.707M5.636 18.364l-.707.707m12.728 0-.707-.707M5.636 5.636l-.707-.707M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px] shrink-0 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79Z" />
+                      </svg>
+                    )}
+                    <span className="text-xs font-semibold text-slate-600">
+                      {themeToggle.theme === "dark" ? "Light mode" : "Dark mode"}
+                    </span>
+                  </span>
+                  <span
+                    className={[
+                      "relative inline-flex h-[18px] w-[30px] shrink-0 rounded-full transition-colors duration-200",
+                      themeToggle.theme === "dark" ? "bg-primary" : "bg-slate-300",
+                    ].join(" ")}
+                  >
+                    <span
+                      className={[
+                        "absolute top-[2px] h-[14px] w-[14px] rounded-full shadow-sm transition-transform duration-200",
+                        themeToggle.theme === "dark" ? "translate-x-[14px]" : "translate-x-[2px]",
+                      ].join(" ")}
+                      style={{ backgroundColor: "#fff" }}
+                    />
+                  </span>
+                </button>
+              ) : null}
+
+              {/* Sign out */}
               {resolvedUserProfile || onSignOut ? (
                 <button
                   type="button"
                   onClick={() => { setIsMobileMenuOpen(false); void handlePlatformSignOut(); }}
-                  className="mt-0.5 flex w-full items-center rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                  className="flex w-full items-center justify-between rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5 transition hover:border-rose-200 hover:bg-rose-100"
                 >
-                  Sign out
+                  <span className="flex items-center gap-2.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px] shrink-0 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
+                    </svg>
+                    <span className="text-xs font-semibold text-rose-500">Sign out</span>
+                  </span>
                 </button>
               ) : null}
+
             </div>
           ) : null}
         </aside>
@@ -488,7 +556,15 @@ export function DeaimerSiteShell({
                 alt="Deaimer"
                 width={120}
                 height={20}
-                className="h-[17px] w-auto"
+                className="cand-light-logo h-[17px] w-auto"
+                priority
+              />
+              <Image
+                src="/reference-site/deaimer-logo-dark-.png"
+                alt="Deaimer"
+                width={120}
+                height={20}
+                className="cand-dark-logo hidden h-[17px] w-auto"
                 priority
               />
             </Link>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { usePathname, useSearchParams } from "next/navigation";
 
@@ -41,6 +41,12 @@ function AdminPlatformShellContent() {
   const [activeUser, setActiveUser] = useState<User | null>(null);
   const [adminApproval, setAdminApproval] = useState<AdminApprovalRecord | null>(null);
   const [adminProfile, setAdminProfile] = useState<AdminWorkspaceProfile | null>(null);
+  const [adminTheme, setAdminTheme] = useState<"light" | "dark">("light");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("deaimer-admin-theme");
+    if (saved === "dark" || saved === "light") setAdminTheme(saved);
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;
@@ -121,54 +127,40 @@ function AdminPlatformShellContent() {
     [adminApproval],
   );
 
-  const workMenuItems: PlatformSideMenuItem[] = allowedAdminServices.map((service) => {
+  const workMenuItems: PlatformSideMenuItem[] = allowedAdminServices.flatMap((service): PlatformSideMenuItem[] => {
     if (service.slug === "global-managed-workforce") {
-      const isGlobal = requestedService === service.slug;
-
-      return {
-        label: service.title,
-        href: `/admin?service=${service.slug}&section=job-posts`,
-        active: isGlobal,
-        children: globalWorkforceSections.map((item) => ({
+      return [
+        { label: "Global Workforce", isSectionHeader: true } satisfies PlatformSideMenuItem,
+        ...globalWorkforceSections.map((item) => ({
           label: item.label,
           href: `/admin?service=${service.slug}&section=${item.section}`,
-          active: isGlobal && requestedSection === item.section,
+          active: requestedService === service.slug && requestedSection === item.section,
         })),
-      };
+      ];
     }
 
     if (service.slug === "data-collection-sourcing") {
-      const isDC = requestedService === service.slug;
-
-      return {
-        label: "Data Collection",
-        href: `/admin?service=${service.slug}&section=projects`,
-        active: isDC,
-        children: dataCollectionSections.map((item) => ({
+      return [
+        { label: "Data Collection", isSectionHeader: true } satisfies PlatformSideMenuItem,
+        ...dataCollectionSections.map((item) => ({
           label: item.label,
           href: `/admin?service=${service.slug}&section=${item.section}`,
-          active: isDC && requestedSection === item.section,
+          active: requestedService === service.slug && requestedSection === item.section,
         })),
-      };
+      ];
     }
 
-    return {
-      label: service.title,
-      href: `/admin?service=${service.slug}`,
-      active: requestedService === service.slug,
-    };
+    return [
+      {
+        label: service.title,
+        href: `/admin?service=${service.slug}`,
+        active: requestedService === service.slug,
+      } satisfies PlatformSideMenuItem,
+    ];
   });
 
   const adminPlatformMenuItems: PlatformSideMenuItem[] = [
-    ...(workMenuItems.length > 0
-      ? [
-          {
-            label: "Work",
-            isSectionHeader: true,
-          } satisfies PlatformSideMenuItem,
-          ...workMenuItems,
-        ]
-      : []),
+    ...workMenuItems,
     {
       label: "Personal",
       isSectionHeader: true,
@@ -180,25 +172,22 @@ function AdminPlatformShellContent() {
     },
     {
       label: "Requests",
+      isSectionHeader: true,
+    },
+    {
+      label: "Leave",
       href: "/admin?service=requests&section=leave",
-      active: isRequests,
-      children: [
-        {
-          label: "Leave",
-          href: "/admin?service=requests&section=leave",
-          active: isRequests && requestedSection === "leave",
-        },
-        {
-          label: "Compensation",
-          href: "/admin?service=requests&section=compensation",
-          active: isRequests && requestedSection === "compensation",
-        },
-        {
-          label: "History",
-          href: "/admin?service=requests&section=history",
-          active: isRequests && requestedSection === "history",
-        },
-      ],
+      active: isRequests && requestedSection === "leave",
+    },
+    {
+      label: "Compensation",
+      href: "/admin?service=requests&section=compensation",
+      active: isRequests && requestedSection === "compensation",
+    },
+    {
+      label: "History",
+      href: "/admin?service=requests&section=history",
+      active: isRequests && requestedSection === "history",
     },
   ];
 
@@ -217,6 +206,29 @@ function AdminPlatformShellContent() {
       }
     : undefined;
 
+  function handleAdminThemeChange(theme: "light" | "dark") {
+    setAdminTheme(theme);
+    localStorage.setItem("deaimer-admin-theme", theme);
+  }
+
+  const adminThemeClass = adminTheme === "dark" ? "cand-dark" : "";
+
+  function shell(content: ReactNode): ReactNode {
+    const siteShell = (
+      <DeaimerSiteShell
+        platformSideMenuItems={activeUser && adminApproval ? adminPlatformMenuItems : undefined}
+        userProfile={resolvedUserProfile}
+        themeToggle={{
+          theme: adminTheme,
+          onToggle: () => handleAdminThemeChange(adminTheme === "dark" ? "light" : "dark"),
+        }}
+      >
+        {content}
+      </DeaimerSiteShell>
+    );
+    return adminThemeClass ? <div className={adminThemeClass}>{siteShell}</div> : siteShell;
+  }
+
   if (isAuthLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-panelStrong">
@@ -233,15 +245,10 @@ function AdminPlatformShellContent() {
     );
   }
 
-  return (
-    <DeaimerSiteShell
-      platformSideMenuItems={activeUser && adminApproval ? adminPlatformMenuItems : undefined}
-      userProfile={resolvedUserProfile}
-    >
-      <Suspense fallback={null}>
-        <GoogleRoleOnboarding role="admin" />
-      </Suspense>
-    </DeaimerSiteShell>
+  return shell(
+    <Suspense fallback={null}>
+      <GoogleRoleOnboarding role="admin" />
+    </Suspense>,
   );
 }
 
