@@ -270,7 +270,7 @@ function WhatsAppCandidateAction({
       onClick={(event) => event.stopPropagation()}
       className={[
         "inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-800 transition hover:bg-emerald-100 focus:opacity-100",
-        alwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+        alwaysVisible ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
       ].join(" ")}
     >
       <WhatsAppMark />
@@ -483,7 +483,7 @@ function CandidateApplicationDetailsPage({
   return (
     <div className="space-y-5">
         <section className="rounded-[1.35rem] border border-slate-200 bg-white px-5 py-4 shadow-panel">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <button
                 type="button"
@@ -506,7 +506,7 @@ function CandidateApplicationDetailsPage({
                 </span>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
               {canManageStatuses ? (
                 <ApplicationStatusSelect
                   application={application}
@@ -735,12 +735,12 @@ function JobRow({
         Job {getGlobalWorkforceJobDisplayId(job)}
       </span>
       <span className="truncate text-sm font-medium text-ink md:text-base">{job.title}</span>
-      {/* Applicant count — fades out on hover */}
-      <div className={["flex items-center justify-end transition-opacity duration-150", isAssignOpen ? "opacity-0" : "group-hover:opacity-0"].join(" ")}>
+      {/* Applicant count — desktop only, fades out on hover */}
+      <div className={["hidden md:flex items-center justify-end transition-opacity duration-150", isAssignOpen ? "opacity-0" : "group-hover:opacity-0"].join(" ")}>
         <JobApplicantsSummary jobId={job.id} />
       </div>
-      {/* Action buttons — anchored to the article, slide in on hover */}
-      <div className={["absolute inset-y-0 right-4 flex items-center gap-1.5 transition-opacity duration-150", isAssignOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"].join(" ")}>
+      {/* Action buttons — mobile: always visible below title; desktop: hover-reveal anchored right */}
+      <div className={["flex flex-wrap items-center gap-1.5 transition-opacity duration-150 md:absolute md:inset-y-0 md:right-4 md:flex-nowrap", isAssignOpen ? "md:opacity-100" : "md:opacity-0 md:group-hover:opacity-100"].join(" ")}>
         <button
           type="button"
           onClick={onView}
@@ -1533,18 +1533,20 @@ function GlobalWorkforceJobViewPage({
                         />
                         <ApplicationStatusBadge status={application.status} />
                         {canManageJobs ? (
-                          <ApplicationStatusSelect
-                            application={application}
-                            isUpdating={isVerifying}
-                            onChange={handleUpdateStatus}
-                          />
+                          <span className="hidden sm:block">
+                            <ApplicationStatusSelect
+                              application={application}
+                              isUpdating={isVerifying}
+                              onChange={handleUpdateStatus}
+                            />
+                          </span>
                         ) : null}
                         {application.status === "viewed" ? (
                           <button
                             type="button"
                             onClick={() => void handleVerify(application)}
                             disabled={isVerifying}
-                            className="inline-flex items-center justify-center rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-60"
+                            className="hidden sm:inline-flex items-center justify-center rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isVerifying ? "..." : "Mark applied"}
                           </button>
@@ -2252,11 +2254,13 @@ function GlobalWorkforceCandidatesSection({
                       />
                       <ApplicationStatusBadge status={application.status} />
                       {canManageStatuses ? (
-                        <ApplicationStatusSelect
-                          application={application}
-                          isUpdating={isVerifying}
-                          onChange={onUpdateStatus}
-                        />
+                        <span className="hidden sm:block">
+                          <ApplicationStatusSelect
+                            application={application}
+                            isUpdating={isVerifying}
+                            onChange={onUpdateStatus}
+                          />
+                        </span>
                       ) : null}
                       {application.status === "viewed" ? (
                         <button
@@ -2266,7 +2270,7 @@ function GlobalWorkforceCandidatesSection({
                             void onVerifyApplication(application);
                           }}
                           disabled={isVerifying}
-                          className="inline-flex items-center justify-center rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-60"
+                          className="hidden sm:inline-flex items-center justify-center rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {isVerifying ? "..." : "Mark applied"}
                         </button>
@@ -2283,7 +2287,7 @@ function GlobalWorkforceCandidatesSection({
                             void onDeleteApplication(application).finally(() => setDeletingApplicationKey(null));
                           }}
                           disabled={deletingApplicationKey === `${application.jobDocumentId || application.jobId}-${application.uid}`}
-                          className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-semibold text-rose-900 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="hidden sm:inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-semibold text-rose-900 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           {deletingApplicationKey === `${application.jobDocumentId || application.jobId}-${application.uid}` ? "..." : "Delete"}
                         </button>
