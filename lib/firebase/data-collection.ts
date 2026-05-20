@@ -4,6 +4,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   increment,
   onSnapshot,
   orderBy,
@@ -66,6 +67,10 @@ export interface DCProject {
   maxQuotaMinutes: number;
   maxQuotaSeconds: number;
   maxJobsPerTasker: number;
+  participants48k: number;
+  participants16k: number;
+  participants8k: number;
+  maxPromptsPerSpeaker: number;
   totalAssetsPerJob: number;
   tatReworkHours: number;
   tatReworkMins: number;
@@ -97,11 +102,13 @@ export type DCProjectInput = Omit<DCProject, "id" | "hoursCompleted" | "particip
 export interface DCSpeaker {
   id: string;
   email: string;
+  speakerId: string;
   firstName: string;
   lastName: string;
   name: string;
   dateOfBirth: string;
   age: string;
+  ageGroup: string;
   country: string;
   region: string;
   languages: string[];
@@ -111,6 +118,10 @@ export interface DCSpeaker {
   dialect: string;
   secondaryDialect: string;
   bio: string;
+  deviceCategory: string;
+  deviceManufacturer: string;
+  deviceModel: string;
+  educationLevel: string;
   status: DCSpeakerStatus;
   totalHours: number;
   projectsCount: number;
@@ -137,6 +148,7 @@ export interface DCAssignment {
   deadline: string;
   status: "active" | "completed" | "paused";
   submittedForReview: boolean;
+  targetSampleRate: number;
   submittedAt?: unknown;
   assignedAt?: unknown;
 }
@@ -251,6 +263,10 @@ function mapProject(data: DocumentData, id: string): DCProject {
     maxQuotaMinutes: Number(data.maxQuotaMinutes ?? 0),
     maxQuotaSeconds: Number(data.maxQuotaSeconds ?? 0),
     maxJobsPerTasker: Number(data.maxJobsPerTasker ?? 1),
+    participants48k: Number(data.participants48k ?? 0),
+    participants16k: Number(data.participants16k ?? 0),
+    participants8k: Number(data.participants8k ?? 0),
+    maxPromptsPerSpeaker: Number(data.maxPromptsPerSpeaker ?? 0),
     totalAssetsPerJob: Number(data.totalAssetsPerJob ?? 0),
     tatReworkHours: Number(data.tatReworkHours ?? 72),
     tatReworkMins: Number(data.tatReworkMins ?? 0),
@@ -292,20 +308,32 @@ function calcSpeakerAge(dob: string): number {
   return age;
 }
 
+function calcAgeGroup(age: number): string {
+  if (age < 25) return "18–24";
+  if (age < 35) return "25–34";
+  if (age < 45) return "35–44";
+  if (age < 55) return "45–54";
+  if (age < 65) return "55–64";
+  return "65+";
+}
+
 function mapSpeaker(data: DocumentData, id: string): DCSpeaker {
   const firstName = String(data.firstName ?? "");
   const lastName = String(data.lastName ?? "");
   const legacyName = String(data.name ?? "");
   const name = (firstName || lastName) ? `${firstName} ${lastName}`.trim() : legacyName;
   const dateOfBirth = String(data.dateOfBirth ?? "");
+  const age = dateOfBirth ? calcSpeakerAge(dateOfBirth) : Number(data.age ?? 0);
   return {
     id,
     email: String(data.email ?? id),
+    speakerId: String(data.speakerId ?? ""),
     firstName,
     lastName,
     name,
     dateOfBirth,
-    age: dateOfBirth ? String(calcSpeakerAge(dateOfBirth)) : String(data.age ?? ""),
+    age: String(age || ""),
+    ageGroup: age >= 18 ? calcAgeGroup(age) : String(data.ageGroup ?? ""),
     country: String(data.country ?? ""),
     region: String(data.region ?? ""),
     languages: Array.isArray(data.languages)
@@ -319,6 +347,10 @@ function mapSpeaker(data: DocumentData, id: string): DCSpeaker {
     dialect: String(data.dialect ?? ""),
     secondaryDialect: String(data.secondaryDialect ?? ""),
     bio: String(data.bio ?? ""),
+    deviceCategory: String(data.deviceCategory ?? ""),
+    deviceManufacturer: String(data.deviceManufacturer ?? ""),
+    deviceModel: String(data.deviceModel ?? ""),
+    educationLevel: String(data.educationLevel ?? ""),
     status: (["pending", "active", "suspended"].includes(data.status)
       ? data.status
       : "pending") as DCSpeakerStatus,
@@ -351,6 +383,7 @@ function mapAssignment(data: DocumentData, id: string): DCAssignment {
       ? data.status
       : "active") as DCAssignment["status"],
     submittedForReview: Boolean(data.submittedForReview ?? false),
+    targetSampleRate: Number(data.targetSampleRate ?? 48000),
     submittedAt: data.submittedAt,
     assignedAt: data.assignedAt,
   };
@@ -563,7 +596,21 @@ export async function inviteAndAssignSpeaker(
   const snap = await getDoc(doc(db(), "speakerAccess", normalizedEmail));
   const speaker = mapSpeaker(snap.data()!, normalizedEmail);
 
-  return createDCAssignment(project, speaker, hoursTarget, adminEmail, adminUid);
+  // Determine which sample-rate tier this speaker belongs to based on fill counts
+  const existingSnap = await getDocs(
+    query(collection(db(), "dcAssignments"), where("projectId", "==", project.id)),
+  );
+  const assignedCount = existingSnap.size;
+  let targetSampleRate: number;
+  if (assignedCount < project.participants48k) {
+    targetSampleRate = 48000;
+  } else if (assignedCount < project.participants48k + project.participants16k) {
+    targetSampleRate = 16000;
+  } else {
+    targetSampleRate = 8000;
+  }
+
+  return createDCAssignment(project, speaker, hoursTarget, adminEmail, adminUid, targetSampleRate);
 }
 
 export async function createDCAssignment(
@@ -572,6 +619,7 @@ export async function createDCAssignment(
   hoursTarget: number,
   inviterEmail: string,
   inviterUid: string,
+  targetSampleRate = 48000,
 ): Promise<string> {
   const docRef = await addDoc(collection(db(), "dcAssignments"), {
     projectId: project.id,
@@ -588,6 +636,7 @@ export async function createDCAssignment(
     sessionsCount: 0,
     deadline: project.deadline,
     status: "active",
+    targetSampleRate,
     assignedAt: serverTimestamp(),
     assignedByEmail: inviterEmail,
     assignedByUid: inviterUid,
@@ -640,26 +689,18 @@ export function subscribeToDCAssignments(
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
-export async function submitDCSession(input: DCSessionInput): Promise<string> {
-  const { auth } = getFirebaseClientServices();
-  // Force refresh=true so mobile sessions with stale tokens don't fail
-  const idToken = await auth.currentUser?.getIdToken(true);
-  if (!idToken) throw new Error("Not authenticated — please sign out and sign back in.");
-
-  const timestamp = Date.now();
-  const ext = input.mimeType.includes("mp4") ? "mp4" : "webm";
-  const filename = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}.${ext}`;
-
-  // 1. Get a short-lived presigned PUT URL from our API route
+async function presignAndUpload(
+  idToken: string,
+  key: string,
+  blob: Blob,
+  contentType: string,
+): Promise<string> {
   let presignRes: Response;
   try {
     presignRes = await fetch("/api/dc-audio/presign", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({ key: filename, contentType: input.mimeType }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ key, contentType }),
     });
   } catch (e) {
     throw new Error(`Presign network error: ${e instanceof Error ? e.message : String(e)}`);
@@ -668,23 +709,25 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
     const body = await presignRes.text().catch(() => "");
     throw new Error(`Presign ${presignRes.status}: ${body}`);
   }
-  const { presignedUrl, publicUrl: audioUrl } = await presignRes.json() as {
-    presignedUrl: string;
-    publicUrl: string;
-  };
-
-  // 2. Upload the blob directly from the browser to R2 — no server roundtrip
-  let uploadRes: Response;
-  try {
-    uploadRes = await fetch(presignedUrl, {
-      method: "PUT",
-      body: input.audioBlob,
-      headers: { "Content-Type": input.mimeType },
-    });
-  } catch (e) {
-    throw new Error(`R2 upload network error: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const { presignedUrl, publicUrl } = await presignRes.json() as { presignedUrl: string; publicUrl: string };
+  const uploadRes = await fetch(presignedUrl, { method: "PUT", body: blob, headers: { "Content-Type": contentType } });
   if (!uploadRes.ok) throw new Error(`R2 upload ${uploadRes.status}`);
+  return publicUrl;
+}
+
+export async function submitDCSession(input: DCSessionInput): Promise<string> {
+  const { auth } = getFirebaseClientServices();
+  // Force refresh=true so mobile sessions with stale tokens don't fail
+  const idToken = await auth.currentUser?.getIdToken(true);
+  if (!idToken) throw new Error("Not authenticated — please sign out and sign back in.");
+
+  const timestamp = Date.now();
+  const base = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}`;
+
+  const rateLabel = input.sampleRate >= 48000 ? "48k" : input.sampleRate >= 16000 ? "16k" : "8k";
+  const ext = input.mimeType.includes("mp4") ? "mp4" : input.mimeType.includes("wav") ? "wav" : "webm";
+  const filePath = `${base}_${rateLabel}.${ext}`;
+  const audioUrl = await presignAndUpload(idToken, filePath, input.audioBlob, input.mimeType);
 
   const docRef = await addDoc(collection(db(), "dcSessions"), {
     projectId: input.projectId,
@@ -696,7 +739,7 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
     speakerName: input.speakerName,
     assignmentId: input.assignmentId,
     audioUrl,
-    filePath: filename,
+    filePath,
     duration: input.duration,
     sampleRate: input.sampleRate,
     bitDepth: input.bitDepth,
@@ -750,6 +793,22 @@ export function subscribeToDCSessionsByProject(
   const q = query(
     collection(db(), "dcSessions"),
     where("projectId", "==", projectId),
+    orderBy("createdAt", "desc"),
+  );
+  return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapSession(d.data(), d.id))));
+}
+
+export function subscribeToDCSessionsByProjects(
+  projectIds: string[],
+  callback: (sessions: DCSession[]) => void,
+) {
+  if (projectIds.length === 0) {
+    callback([]);
+    return () => undefined;
+  }
+  const q = query(
+    collection(db(), "dcSessions"),
+    where("projectId", "in", projectIds.slice(0, 30)),
     orderBy("createdAt", "desc"),
   );
   return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapSession(d.data(), d.id))));
@@ -962,7 +1021,7 @@ export async function submitConvSession(input: DCSessionInput): Promise<string> 
   if (!idToken) throw new Error("Not authenticated.");
 
   const timestamp = Date.now();
-  const ext = input.mimeType.includes("mp4") ? "mp4" : "webm";
+  const ext = input.mimeType.includes("mp4") ? "mp4" : input.mimeType.includes("wav") ? "wav" : "webm";
   const filename = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}.${ext}`;
 
   const presignRes = await fetch("/api/dc-audio/presign", {

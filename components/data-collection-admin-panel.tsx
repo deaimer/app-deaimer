@@ -498,6 +498,83 @@ function ProjectDetail({
         </div>
       )}
 
+      {/* Demographic distribution */}
+      {assignments.length > 0 && (() => {
+        const genderCounts = sessions.reduce<Record<string, number>>((acc, s) => {
+          const g = s.gender || "Unknown";
+          acc[g] = (acc[g] ?? 0) + 1;
+          return acc;
+        }, {});
+        const ageCounts = sessions.reduce<Record<string, number>>((acc, s) => {
+          const raw = Number(s.age);
+          let group = "Unknown";
+          if (!isNaN(raw) && raw > 0) {
+            if (raw < 25) group = "18–24";
+            else if (raw < 35) group = "25–34";
+            else if (raw < 45) group = "35–44";
+            else if (raw < 55) group = "45–54";
+            else if (raw < 65) group = "55–64";
+            else group = "65+";
+          }
+          acc[group] = (acc[group] ?? 0) + 1;
+          return acc;
+        }, {});
+        const tierCounts = assignments.reduce<Record<string, number>>((acc, a) => {
+          const label = a.targetSampleRate === 48000 ? "48kHz" : a.targetSampleRate === 16000 ? "16kHz" : a.targetSampleRate === 8000 ? "8kHz" : "—";
+          acc[label] = (acc[label] ?? 0) + 1;
+          return acc;
+        }, {});
+        const uniqueSpeakers = new Set(sessions.map((s) => s.speakerId)).size;
+        return (
+          <div className="rounded-[1.25rem] border border-slate-200 bg-white p-5 space-y-4">
+            <h3 className="font-semibold text-ink">Demographics</h3>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
+                <p className="text-[11px] uppercase tracking-widest text-muted mb-2">Unique speakers</p>
+                <p className="text-2xl font-light text-ink">{uniqueSpeakers}</p>
+              </div>
+              <div className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
+                <p className="text-[11px] uppercase tracking-widest text-muted mb-2">Gender</p>
+                <div className="space-y-1">
+                  {Object.entries(genderCounts).map(([g, n]) => (
+                    <div key={g} className="flex items-center justify-between text-xs">
+                      <span className="text-muted">{g}</span>
+                      <span className="font-medium text-ink">{n}</span>
+                    </div>
+                  ))}
+                  {Object.keys(genderCounts).length === 0 && <p className="text-xs text-muted">No data</p>}
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
+                <p className="text-[11px] uppercase tracking-widest text-muted mb-2">Age groups</p>
+                <div className="space-y-1">
+                  {Object.entries(ageCounts).map(([g, n]) => (
+                    <div key={g} className="flex items-center justify-between text-xs">
+                      <span className="text-muted">{g}</span>
+                      <span className="font-medium text-ink">{n}</span>
+                    </div>
+                  ))}
+                  {Object.keys(ageCounts).length === 0 && <p className="text-xs text-muted">No data</p>}
+                </div>
+              </div>
+            </div>
+            {isUtterance && (
+              <div className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
+                <p className="text-[11px] uppercase tracking-widest text-muted mb-2">Sample rate tiers (assigned)</p>
+                <div className="flex flex-wrap gap-4">
+                  {Object.entries(tierCounts).map(([tier, n]) => (
+                    <div key={tier} className="flex items-center gap-1.5 text-xs">
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-medium text-ink">{tier}</span>
+                      <span className="text-muted">{n} speakers</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <h3 className="font-semibold text-ink">Sessions ({sessions.length})</h3>
       {sessions.length === 0 ? (
         <EmptyState message="No sessions recorded yet." />

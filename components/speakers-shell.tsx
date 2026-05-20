@@ -190,6 +190,33 @@ const LANGUAGES = [
   "Zulu",
 ];
 
+// ─── Device / education static data ──────────────────────────────────────────
+
+const DEVICE_CATEGORIES = [
+  "Smartphone",
+  "Laptop",
+  "Tablet",
+  "Desktop",
+  "Dedicated Microphone",
+  "Other",
+];
+
+const DEVICE_MANUFACTURERS = [
+  "Apple", "Samsung", "Huawei", "Xiaomi", "OnePlus", "OPPO", "Vivo", "Realme",
+  "Google", "Sony", "Nokia", "Motorola", "LG", "HP", "Dell", "Lenovo", "ASUS",
+  "Acer", "Microsoft", "Logitech", "Blue Microphones", "Audio-Technica", "Rode",
+];
+
+const EDUCATION_LEVELS = [
+  "No formal education",
+  "Primary / Elementary",
+  "Secondary / High School",
+  "Vocational / Technical",
+  "Bachelor's Degree",
+  "Master's Degree",
+  "Doctoral Degree",
+];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function calcAge(dob: string): number {
@@ -202,11 +229,67 @@ function calcAge(dob: string): number {
   return age;
 }
 
+function calcAgeGroup(age: number): string {
+  if (age < 25) return "18–24";
+  if (age < 35) return "25–34";
+  if (age < 45) return "35–44";
+  if (age < 55) return "45–54";
+  if (age < 65) return "55–64";
+  return "65+";
+}
+
 function maxDOBDate(): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
   return d.toISOString().split("T")[0];
 }
+
+function parseSampleRate(str: string): number {
+  if (!str) return 16000;
+  const m = str.match(/(\d+\.?\d*)\s*k/i);
+  if (m) return Math.round(parseFloat(m[1]) * 1000);
+  const plain = str.match(/(\d+)/);
+  if (plain) return parseInt(plain[1], 10);
+  return 16000;
+}
+
+function encodeWAV(samples: Float32Array, sampleRate: number): Blob {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeStr(offset: number, s: string) {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  }
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let off = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
 
 function formatDuration(sec: number) {
   const h = Math.floor(sec / 3600);
@@ -248,7 +331,10 @@ function isProfileComplete(speaker: DCSpeaker) {
     speaker.country &&
     speaker.region &&
     speaker.languages.length > 0 &&
-    speaker.phone
+    speaker.phone &&
+    speaker.deviceCategory &&
+    speaker.deviceManufacturer &&
+    speaker.educationLevel
   );
 }
 
@@ -720,9 +806,9 @@ function ProjectView({
 
 // ─── Task View (prompt-by-prompt recorder) ────────────────────────────────────
 
-type PromptRecordState = "idle" | "recording" | "stopped" | "saving";
+type PromptRecordState = "idle" | "recording" | "processing" | "stopped" | "saving";
 
-interface PromptBlob { blob: Blob; mimeType: string; duration: number; url: string }
+interface PromptBlob { blob: Blob; sampleRate: number; duration: number; url: string }
 
 function TaskView({
   speaker,
@@ -765,11 +851,13 @@ function TaskView({
   const [submitting, setSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState(0);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const isCollectingRef = useRef(false);
 
   const currentPrompt = prompts[promptIdx];
   const maxSec = currentPrompt?.maxSeconds ?? 30;
@@ -780,12 +868,16 @@ function TaskView({
   const canGoPrev = promptIdx > 0 || taskIndex > 0;
   const newBlobCount = Array.from(blobs.keys()).filter((i) => !submittedSet.has(i)).length;
   const submittedSession = sessions.find((s) => s.taskId === task.id && s.promptIndex === promptIdx && Boolean(s.audioUrl)) ?? null;
+  // Max prompts per speaker enforcement (0 = unlimited)
+  const totalSubmittedPrompts = sessions.filter((s) => s.assignmentId === assignment.id && Boolean(s.audioUrl)).length;
+  const maxPromptsLimit = project.maxPromptsPerSpeaker ?? 0;
+  const maxPromptsReached = maxPromptsLimit > 0 && totalSubmittedPrompts >= maxPromptsLimit && !isSubmitted;
   // Lock recording once submitted for review, except for rejected prompts
-  const isRecordingAllowed = !assignment.submittedForReview || submittedSession?.qaStatus === "rejected";
+  const isRecordingAllowed = (!assignment.submittedForReview && !maxPromptsReached) || submittedSession?.qaStatus === "rejected";
 
   useEffect(() => {
     if (recordState === "recording" && elapsed >= maxSec) {
-      stopRecording();
+      void stopRecording();
     }
   }, [elapsed, maxSec, recordState]);
 
@@ -794,8 +886,7 @@ function TaskView({
     setLevelBars(Array(24).fill(0));
   }
 
-  function startVisualizer(stream: MediaStream) {
-    const ctx = new AudioContext();
+  function startVisualizer(ctx: AudioContext, stream: MediaStream) {
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 64;
     ctx.createMediaStreamSource(stream).connect(analyser);
@@ -815,26 +906,27 @@ function TaskView({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      startVisualizer(stream);
-      let recorder: MediaRecorder;
-      try {
-        const preferred = MediaRecorder.isTypeSupported?.("audio/webm") ? "audio/webm" : "audio/mp4";
-        recorder = new MediaRecorder(stream, { mimeType: preferred });
-      } catch { recorder = new MediaRecorder(stream); }
-      const rawMime = recorder.mimeType || "";
-      const mimeType: string = rawMime.startsWith("audio/mp4") ? "audio/mp4" : "audio/webm";
-      mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        setBlobs((prev) => new Map(prev).set(promptIdx, { blob, mimeType, duration: elapsed, url }));
-        setRecordState("stopped");
-        stopVisualizer();
-        stream.getTracks().forEach((t) => t.stop());
+
+      const targetRate = assignment.targetSampleRate || parseSampleRate(project.audioFormat?.sampleRate ?? "48kHz");
+      const ctx = new AudioContext({ sampleRate: targetRate });
+      audioCtxRef.current = ctx;
+
+      startVisualizer(ctx, stream);
+
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      pcmChunksRef.current = [];
+      isCollectingRef.current = true;
+
+      processor.onaudioprocess = (e) => {
+        if (!isCollectingRef.current) return;
+        pcmChunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
       };
-      recorder.start(100);
+
+      source.connect(processor);
+      processor.connect(ctx.destination);
+
       setRecordState("recording");
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
@@ -846,16 +938,44 @@ function TaskView({
     }
   }
 
-  function stopRecording() {
+  async function stopRecording() {
     if (timerRef.current) clearInterval(timerRef.current);
-    mediaRecorderRef.current?.stop();
+    isCollectingRef.current = false;
     stopVisualizer();
     streamRef.current?.getTracks().forEach((t) => t.stop());
+
+    const chunks = pcmChunksRef.current;
+    const ctx = audioCtxRef.current;
+
+    processorRef.current?.disconnect();
+    void ctx?.close();
+    audioCtxRef.current = null;
+    processorRef.current = null;
+
+    if (chunks.length === 0) {
+      setRecordState("idle");
+      return;
+    }
+
+    setRecordState("processing");
+
+    const sampleRate = assignment.targetSampleRate || parseSampleRate(project.audioFormat?.sampleRate ?? "48kHz");
+    const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+    const pcm = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) { pcm.set(chunk, offset); offset += chunk.length; }
+
+    const durationSec = Math.round(totalLength / sampleRate);
+    const blob = encodeWAV(pcm, sampleRate);
+    const url = URL.createObjectURL(blob);
+
+    setBlobs((prev) => new Map(prev).set(promptIdx, { blob, sampleRate, duration: durationSec, url }));
+    setRecordState("stopped");
   }
 
   function reRecord() {
-    const prev = blobs.get(promptIdx);
-    if (prev?.url) URL.revokeObjectURL(prev.url);
+    const existing = blobs.get(promptIdx);
+    if (existing?.url) URL.revokeObjectURL(existing.url);
     setBlobs((prev) => { const m = new Map(prev); m.delete(promptIdx); return m; });
     setElapsed(0);
     setRecordState("idle");
@@ -909,9 +1029,9 @@ function TaskView({
           promptIndex: idx,
           promptText: prompts[idx]?.text ?? "",
           audioBlob: entry.blob,
-          mimeType: entry.mimeType,
+          mimeType: "audio/wav",
           duration: entry.duration,
-          sampleRate: 44100,
+          sampleRate: entry.sampleRate,
           bitDepth: 16,
           gender: speaker.gender,
           age: speaker.age,
@@ -936,8 +1056,11 @@ function TaskView({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      isCollectingRef.current = false;
       stopVisualizer();
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      processorRef.current?.disconnect();
+      void audioCtxRef.current?.close();
       blobs.forEach((b) => URL.revokeObjectURL(b.url));
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1026,7 +1149,9 @@ function TaskView({
             </button>
           )}
           {!isRecordingAllowed && (
-            <p className="text-center text-xs text-muted">Locked — submitted for review</p>
+            <p className="text-center text-xs text-muted">
+              {maxPromptsReached ? `Prompt limit reached (${maxPromptsLimit})` : "Locked — submitted for review"}
+            </p>
           )}
         </div>
       )}
@@ -1047,28 +1172,45 @@ function TaskView({
         )
       )}
 
+      {/* Max prompts reached banner */}
+      {maxPromptsReached && (
+        <div className="rounded-[1.25rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          You have reached the maximum of <strong>{maxPromptsLimit}</strong> prompts for this project. No further recordings are allowed.
+        </div>
+      )}
+
       {/* Recorder — hidden when reviewing a submitted prompt, or locked */}
       {(recordState !== "idle" || !isSubmitted || blobs.has(promptIdx)) && isRecordingAllowed && (
       <div className="flex flex-col items-center gap-5 rounded-[1.75rem] border border-slate-200 bg-white px-4 py-10">
-        <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
-          {formatDuration(elapsed)}
-        </p>
-        <div className="flex h-10 items-end gap-[2px]" aria-hidden="true">
-          {levelBars.map((h, i) => (
-            <div key={i} className={["w-[3px] rounded-full transition-all duration-75", recordState === "recording" ? "bg-primary" : "bg-slate-200"].join(" ")} style={{ height: `${Math.max(4, h)}%` }} />
-          ))}
-        </div>
-        {recordState === "idle" && (
-          <button type="button" onClick={() => void startRecording()} className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-white shadow-[0_4px_24px_rgba(43,133,240,0.4)] hover:bg-primaryStrong active:scale-95">
-            <span className="text-2xl">⏺</span>
-          </button>
-        )}
-        {recordState === "recording" && (
+        {recordState === "processing" ? (
+          <div className="flex flex-col items-center gap-3">
+            <span className="h-10 w-10 animate-spin rounded-full border-[3px] border-slate-200 border-t-primary" />
+            <p className="text-sm font-medium text-ink">Processing audio…</p>
+            <p className="text-xs text-muted">Encoding audio…</p>
+          </div>
+        ) : (
           <>
-            <button type="button" onClick={stopRecording} className="flex h-20 w-20 items-center justify-center rounded-full bg-rose-600 text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 active:scale-95">
-              <span className="text-2xl">⏹</span>
-            </button>
-            <p className="animate-pulse text-xs text-muted">Recording… speak naturally</p>
+            <p className={["font-mono text-5xl font-light tracking-tight sm:text-6xl", timerColor].join(" ")}>
+              {formatDuration(elapsed)}
+            </p>
+            <div className="flex h-10 items-end gap-[2px]" aria-hidden="true">
+              {levelBars.map((h, i) => (
+                <div key={i} className={["w-[3px] rounded-full transition-all duration-75", recordState === "recording" ? "bg-primary" : "bg-slate-200"].join(" ")} style={{ height: `${Math.max(4, h)}%` }} />
+              ))}
+            </div>
+            {recordState === "idle" && (
+              <button type="button" onClick={() => void startRecording()} className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-white shadow-[0_4px_24px_rgba(43,133,240,0.4)] hover:bg-primaryStrong active:scale-95">
+                <span className="text-2xl">⏺</span>
+              </button>
+            )}
+            {recordState === "recording" && (
+              <>
+                <button type="button" onClick={() => void stopRecording()} className="flex h-20 w-20 items-center justify-center rounded-full bg-rose-600 text-white shadow-[0_4px_24px_rgba(220,38,38,0.4)] hover:bg-rose-700 active:scale-95">
+                  <span className="text-2xl">⏹</span>
+                </button>
+                <p className="animate-pulse text-xs text-muted">Recording… speak naturally</p>
+              </>
+            )}
           </>
         )}
       </div>
@@ -1092,7 +1234,7 @@ function TaskView({
             <button
               type="button"
               onClick={handlePrev}
-              disabled={recordState === "recording"}
+              disabled={recordState === "recording" || recordState === "processing"}
               className="flex-1 rounded-full border border-slate-200 py-3 text-sm font-semibold text-muted transition hover:bg-slate-50 disabled:opacity-40"
             >
               ← Previous
@@ -1104,7 +1246,7 @@ function TaskView({
             <button
               type="button"
               onClick={handleNext}
-              disabled={recordState === "recording"}
+              disabled={recordState === "recording" || recordState === "processing"}
               className={[
                 "flex-1 rounded-full py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-40",
                 isLastPrompt ? "bg-emerald-600 hover:bg-emerald-700" : "bg-primary hover:bg-primaryStrong",
@@ -1901,9 +2043,16 @@ function Profile({
       speaker.phoneCountryCode ||
       (COUNTRIES.find((c) => c.name === speaker.country)?.dial ?? ""),
     phone: speaker.phone,
+    deviceCategory: speaker.deviceCategory,
+    deviceManufacturer: speaker.deviceManufacturer,
+    deviceModel: speaker.deviceModel,
+    educationLevel: speaker.educationLevel,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [manufacturerOtherMode, setManufacturerOtherMode] = useState(
+    !!speaker.deviceManufacturer && !DEVICE_MANUFACTURERS.includes(speaker.deviceManufacturer),
+  );
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -1927,7 +2076,14 @@ function Profile({
         speaker.phoneCountryCode ||
         (COUNTRIES.find((c) => c.name === speaker.country)?.dial ?? ""),
       phone: speaker.phone,
+      deviceCategory: speaker.deviceCategory,
+      deviceManufacturer: speaker.deviceManufacturer,
+      deviceModel: speaker.deviceModel,
+      educationLevel: speaker.educationLevel,
     });
+    setManufacturerOtherMode(
+      !!speaker.deviceManufacturer && !DEVICE_MANUFACTURERS.includes(speaker.deviceManufacturer),
+    );
     setError("");
     setEditing(false);
   }
@@ -1966,6 +2122,18 @@ function Profile({
       setError("Please enter your phone number.");
       return;
     }
+    if (!form.deviceCategory) {
+      setError("Please select your device category.");
+      return;
+    }
+    if (!form.deviceManufacturer.trim()) {
+      setError("Please enter your device manufacturer.");
+      return;
+    }
+    if (!form.educationLevel) {
+      setError("Please select your education level.");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -1973,18 +2141,24 @@ function Profile({
       const firstName = form.firstName.trim();
       const lastName = form.lastName.trim();
       const updatedName = `${firstName} ${lastName}`;
+      const age = calcAge(form.dateOfBirth);
       await updateDCSpeakerProfile({
         firstName,
         lastName,
         name: updatedName,
         dateOfBirth: form.dateOfBirth,
-        age: String(calcAge(form.dateOfBirth)),
+        age: String(age),
+        ageGroup: calcAgeGroup(age),
         gender: form.gender,
         country: form.country,
         region: form.region.trim(),
         languages: form.languages,
         phoneCountryCode: form.phoneCountryCode,
         phone: form.phone.trim(),
+        deviceCategory: form.deviceCategory,
+        deviceManufacturer: form.deviceManufacturer.trim(),
+        deviceModel: form.deviceModel.trim(),
+        educationLevel: form.educationLevel,
       });
       onSaved({
         ...speaker,
@@ -1992,13 +2166,18 @@ function Profile({
         lastName,
         name: updatedName,
         dateOfBirth: form.dateOfBirth,
-        age: String(calcAge(form.dateOfBirth)),
+        age: String(age),
+        ageGroup: calcAgeGroup(age),
         gender: form.gender,
         country: form.country,
         region: form.region.trim(),
         languages: form.languages,
         phoneCountryCode: form.phoneCountryCode,
         phone: form.phone.trim(),
+        deviceCategory: form.deviceCategory,
+        deviceManufacturer: form.deviceManufacturer.trim(),
+        deviceModel: form.deviceModel.trim(),
+        educationLevel: form.educationLevel,
       });
       setEditing(false);
     } catch (err) {
@@ -2041,14 +2220,19 @@ function Profile({
 
           {/* Stat pills */}
           <div className="mt-4 flex flex-wrap gap-1.5">
+            {speaker.speakerId && (
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                #{speaker.speakerId}
+              </span>
+            )}
             {speaker.gender && (
               <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink capitalize shadow-sm">
                 {speaker.gender.replace("_", " ")}
               </span>
             )}
-            {speaker.age && (
+            {speaker.ageGroup && (
               <span className="rounded-full border border-white/80 bg-white px-2.5 py-1 text-xs font-medium text-ink shadow-sm">
-                {speaker.age} yrs
+                {speaker.ageGroup}
               </span>
             )}
             {speaker.country && (
@@ -2071,13 +2255,21 @@ function Profile({
 
         {/* Details list */}
         <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+          {speaker.speakerId && (
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <p className="text-xs font-medium text-muted">Speaker ID</p>
+              <p className="text-sm font-semibold text-primary">#{speaker.speakerId}</p>
+            </div>
+          )}
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <p className="text-xs font-medium text-muted">Date of birth</p>
             <p className="text-sm font-medium text-ink">{formatDOB(speaker.dateOfBirth)}</p>
           </div>
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-            <p className="text-xs font-medium text-muted">Age</p>
-            <p className="text-sm font-medium text-ink">{speaker.age ? `${speaker.age} years old` : "—"}</p>
+            <p className="text-xs font-medium text-muted">Age / Age group</p>
+            <p className="text-sm font-medium text-ink">
+              {speaker.age ? `${speaker.age} yrs` : "—"}{speaker.ageGroup ? ` · ${speaker.ageGroup}` : ""}
+            </p>
           </div>
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <p className="text-xs font-medium text-muted">Gender</p>
@@ -2104,6 +2296,22 @@ function Profile({
             ) : (
               <p className="text-sm font-medium text-ink">—</p>
             )}
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Education</p>
+            <p className="text-sm font-medium text-ink">{speaker.educationLevel || "—"}</p>
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Device</p>
+            <p className="text-sm font-medium text-ink">
+              {speaker.deviceManufacturer
+                ? [speaker.deviceManufacturer, speaker.deviceModel].filter(Boolean).join(" ")
+                : "—"}
+            </p>
+          </div>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <p className="text-xs font-medium text-muted">Device type</p>
+            <p className="text-sm font-medium text-ink">{speaker.deviceCategory || "—"}</p>
           </div>
           <div className="flex items-center justify-between px-5 py-4">
             <p className="text-xs font-medium text-muted">Phone</p>
@@ -2274,6 +2482,88 @@ function Profile({
             selected={form.languages}
             onChange={(langs) => set("languages", langs)}
           />
+        </SectionCard>
+
+        {/* Education */}
+        <SectionCard title="Education">
+          <label className="block">
+            <span className={labelCls}>Education level <span className="text-primary">*</span></span>
+            <select
+              className={fieldCls}
+              value={form.educationLevel}
+              onChange={(e) => set("educationLevel", e.target.value)}
+              required
+            >
+              <option value="">Select education level…</option>
+              {EDUCATION_LEVELS.map((level) => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
+          </label>
+        </SectionCard>
+
+        {/* Recording device */}
+        <SectionCard title="Recording device">
+          <p className="text-xs text-muted -mt-1">Tell us what device you use to record. This helps us with audio quality metadata.</p>
+          <label className="block">
+            <span className={labelCls}>Device category <span className="text-primary">*</span></span>
+            <select
+              className={fieldCls}
+              value={form.deviceCategory}
+              onChange={(e) => set("deviceCategory", e.target.value)}
+              required
+            >
+              <option value="">Select device type…</option>
+              {DEVICE_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className={labelCls}>Manufacturer <span className="text-primary">*</span></span>
+            <select
+              className={fieldCls}
+              value={manufacturerOtherMode ? "__other__" : form.deviceManufacturer}
+              onChange={(e) => {
+                if (e.target.value === "__other__") {
+                  setManufacturerOtherMode(true);
+                  set("deviceManufacturer", "");
+                } else {
+                  setManufacturerOtherMode(false);
+                  set("deviceManufacturer", e.target.value);
+                }
+              }}
+            >
+              <option value="">Select manufacturer…</option>
+              {DEVICE_MANUFACTURERS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+              <option value="__other__">Other…</option>
+            </select>
+          </label>
+          {manufacturerOtherMode && (
+            <label className="block">
+              <span className={labelCls}>Manufacturer name <span className="text-primary">*</span></span>
+              <input
+                className={fieldCls}
+                placeholder="e.g. Xiaomi, Tecno, JBL…"
+                value={form.deviceManufacturer}
+                onChange={(e) => set("deviceManufacturer", e.target.value)}
+                autoFocus
+              />
+            </label>
+          )}
+          {form.deviceManufacturer && (
+            <label className="block">
+              <span className={labelCls}>Device model</span>
+              <input
+                className={fieldCls}
+                placeholder="e.g. iPhone 15 Pro, Galaxy S24, MacBook Air…"
+                value={form.deviceModel}
+                onChange={(e) => set("deviceModel", e.target.value)}
+              />
+            </label>
+          )}
         </SectionCard>
 
         {/* Phone */}
@@ -3437,6 +3727,8 @@ function SpeakerPortal({ user }: { user: User }) {
   const [speakerLoading, setSpeakerLoading] = useState(true);
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [geoBlocked, setGeoBlocked] = useState(false);
+  const [geoDetectedCountry, setGeoDetectedCountry] = useState("");
 
   // Projects navigation state
   const [activeAssignment, setActiveAssignment] = useState<DCAssignment | null>(null);
@@ -3468,6 +3760,26 @@ function SpeakerPortal({ user }: { user: User }) {
       setSpeakerLoading(false);
     });
   }, [user.uid]);
+
+  // IP geolocation: verify speaker's registered country matches their actual location
+  useEffect(() => {
+    if (!speaker?.country) return;
+    void (async () => {
+      try {
+        const res = await fetch("https://ipapi.co/json/");
+        if (!res.ok) return; // fail open — don't block on API error
+        const data = await res.json() as { country_name?: string };
+        const detected = (data.country_name ?? "").trim();
+        if (!detected) return;
+        setGeoDetectedCountry(detected);
+        if (detected.toLowerCase() !== speaker.country.toLowerCase()) {
+          setGeoBlocked(true);
+        }
+      } catch {
+        // fail open — network issues must not lock out speakers
+      }
+    })();
+  }, [speaker?.country]);
 
   useEffect(() => {
     if (!user.email) return;
@@ -3532,6 +3844,24 @@ function SpeakerPortal({ user }: { user: User }) {
       <DeaimerSiteShell>
         <div className="flex min-h-[60vh] items-center justify-center">
           <span className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+        </div>
+      </DeaimerSiteShell>
+    );
+  }
+
+  if (geoBlocked) {
+    return (
+      <DeaimerSiteShell>
+        <div className="flex min-h-[60vh] flex-col items-center justify-center px-4 text-center">
+          <h1 className="text-xl font-semibold text-ink">Location mismatch</h1>
+          <p className="mt-2 max-w-sm text-sm text-muted">
+            Your profile country is <strong>{speaker?.country}</strong>, but your current location appears to be <strong>{geoDetectedCountry}</strong>.
+            Only speakers located in their registered country can access the platform.
+          </p>
+          <p className="mt-2 max-w-sm text-xs text-muted">If this is incorrect, please contact your project coordinator.</p>
+          <button type="button" onClick={() => void handleSignOut()} className="mt-5 rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong">
+            Sign out
+          </button>
         </div>
       </DeaimerSiteShell>
     );
@@ -3732,6 +4062,12 @@ function createEmptySpeaker(user: User): DCSpeaker {
     dialect: "",
     secondaryDialect: "",
     bio: "",
+    speakerId: "",
+    ageGroup: "",
+    deviceCategory: "",
+    deviceManufacturer: "",
+    deviceModel: "",
+    educationLevel: "",
     status: "pending",
     totalHours: 0,
     projectsCount: 0,

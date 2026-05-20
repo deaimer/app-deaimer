@@ -62,6 +62,10 @@ interface FormState {
   targetHours: number;
   maxQuotaHours: number;
   maxJobsPerTasker: number;
+  participants48k: number;
+  participants16k: number;
+  participants8k: number;
+  maxPromptsPerSpeaker: number;
   tatReworkHours: number;
   transcriptionRequired: boolean;
   qaRequired: boolean;
@@ -83,6 +87,10 @@ function emptyForm(): FormState {
     targetHours: 100,
     maxQuotaHours: 2,
     maxJobsPerTasker: 1,
+    participants48k: 0,
+    participants16k: 0,
+    participants8k: 0,
+    maxPromptsPerSpeaker: 0,
     tatReworkHours: 72,
     transcriptionRequired: true,
     qaRequired: true,
@@ -607,6 +615,10 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
         targetHours: project.targetHours,
         maxQuotaHours: project.maxQuotaHours,
         maxJobsPerTasker: project.maxJobsPerTasker,
+        participants48k: project.participants48k,
+        participants16k: project.participants16k,
+        participants8k: project.participants8k,
+        maxPromptsPerSpeaker: project.maxPromptsPerSpeaker,
         tatReworkHours: project.tatReworkHours,
         transcriptionRequired: project.transcriptionRequired,
         qaRequired: project.qaRequired,
@@ -674,6 +686,10 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
         maxQuotaMinutes: 0,
         maxQuotaSeconds: 0,
         maxJobsPerTasker: form.maxJobsPerTasker,
+        participants48k: form.participants48k,
+        participants16k: form.participants16k,
+        participants8k: form.participants8k,
+        maxPromptsPerSpeaker: form.maxPromptsPerSpeaker,
         totalAssetsPerJob: form.tasks.length,
         tatReworkHours: form.tatReworkHours,
         tatReworkMins: 0,
@@ -701,7 +717,7 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
         domainSplit: "",
         minDuration: Math.min(...form.tasks.map((t) => t.minDurationSeconds)),
         maxDuration: Math.max(...form.tasks.map((t) => t.maxDurationSeconds)),
-        audioFormat: { format: "WebM/MP4", bitDepth: "16-bit", sampleRate: "44.1kHz" },
+        audioFormat: { format: "WAV", bitDepth: "16-bit PCM", sampleRate: "48kHz" },
         transcriptionRequired: form.transcriptionRequired,
         qaRequired: form.qaRequired,
         status: form.status,
@@ -1000,6 +1016,50 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
                   />
                 </Field>
               </div>
+
+              {form.recordingMode === "utterance" && (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Speaker tiers — fill 48kHz first, then 16kHz, then 8kHz</p>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Field label="Speakers at 48kHz" hint="Filled first.">
+                      <input
+                        type="number"
+                        min={0}
+                        className={inputCls}
+                        value={form.participants48k}
+                        onChange={(e) => set("participants48k", Number(e.target.value))}
+                      />
+                    </Field>
+                    <Field label="Speakers at 16kHz" hint="Filled after 48kHz.">
+                      <input
+                        type="number"
+                        min={0}
+                        className={inputCls}
+                        value={form.participants16k}
+                        onChange={(e) => set("participants16k", Number(e.target.value))}
+                      />
+                    </Field>
+                    <Field label="Speakers at 8kHz" hint="Filled last.">
+                      <input
+                        type="number"
+                        min={0}
+                        className={inputCls}
+                        value={form.participants8k}
+                        onChange={(e) => set("participants8k", Number(e.target.value))}
+                      />
+                    </Field>
+                  </div>
+                  <Field label="Max prompts per speaker" hint="0 = unlimited. Speakers cannot exceed this across all tasks.">
+                    <input
+                      type="number"
+                      min={0}
+                      className={inputCls}
+                      value={form.maxPromptsPerSpeaker}
+                      onChange={(e) => set("maxPromptsPerSpeaker", Number(e.target.value))}
+                    />
+                  </Field>
+                </>
+              )}
 
               <Field label="TAT rework window (hours)" hint="Time given to fix a rejected session.">
                 <input
