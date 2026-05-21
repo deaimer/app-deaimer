@@ -24,12 +24,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing key or contentType" }, { status: 400 });
   }
 
-  if (!["audio/webm", "audio/mp4"].includes(contentType)) {
+  if (!["audio/webm", "audio/mp4", "audio/wav"].includes(contentType)) {
     return NextResponse.json({ error: "Invalid contentType" }, { status: 400 });
   }
 
   // Prevent path traversal — only allow the dc-audio/* pattern
-  if (!/^dc-audio\/[^/]+\/[^/]+\/\d+\.(webm|mp4)$/.test(key)) {
+  // Key format: dc-audio/{projectId}/{speakerId}/{timestamp}_{rateLabel}.{ext}
+  if (!/^dc-audio\/[^/]+\/[^/]+\/\d+(_\d+k)?\.(webm|mp4|wav)$/.test(key)) {
     return NextResponse.json({ error: "Invalid key format" }, { status: 400 });
   }
 
