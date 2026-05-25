@@ -889,7 +889,7 @@ function JobDetailsDrawer({
     { label: "Job type", value: job.jobType },
     { label: "Workplace", value: job.workplace },
     { label: "Languages", value: formatJobLanguages(job) },
-    { label: "Country", value: job.country },
+    { label: "Countries", value: (job.countries.length > 0 ? job.countries : job.country ? [job.country] : []).join(", ") || "Not set" },
     { label: "Seniority", value: job.seniority },
     { label: "Openings", value: String(job.openings) },
     { label: "Pay", value: job.compensation },
@@ -1330,7 +1330,7 @@ function GlobalWorkforceJobViewPage({
     { label: "Job type", value: job.jobType },
     { label: "Workplace", value: job.workplace },
     { label: "Languages", value: formatJobLanguages(job) },
-    { label: "Country", value: job.country },
+    { label: "Countries", value: (job.countries.length > 0 ? job.countries : job.country ? [job.country] : []).join(", ") || "Not set" },
     { label: "Seniority", value: job.seniority },
     { label: "Openings", value: String(job.openings) },
     { label: "Pay", value: job.compensation },
@@ -1598,7 +1598,7 @@ function GlobalWorkforceDashboardSection({
   applications: GlobalWorkforceApplicationRecord[];
 }) {
   const openJobs = jobs.filter((job) => job.status === "Open").length;
-  const activeCountries = new Set(jobs.map((job) => job.country).filter(Boolean)).size;
+  const activeCountries = new Set(jobs.flatMap((job) => job.countries.length > 0 ? job.countries : job.country ? [job.country] : []).filter(Boolean)).size;
   const activeLanguages = new Set(jobs.flatMap((job) => job.languages).filter(Boolean)).size;
   const appliedCandidates = new Set(applications.map((application) => application.uid)).size;
   const latestApplications = applications.slice(0, 6);
@@ -3153,10 +3153,12 @@ function GlobalWorkforceJobEditor({
   activeUser,
   editingJobId,
   routeBase,
+  existingJobs,
 }: {
   activeUser: User;
   editingJobId: string | null;
   routeBase: string;
+  existingJobs: GlobalWorkforceJobPost[];
 }) {
   const router = useRouter();
   const [jobDraft, setJobDraft] = useState<GlobalWorkforceJobDraft>(
@@ -3166,6 +3168,7 @@ function GlobalWorkforceJobEditor({
   const [approvedAdmins, setApprovedAdmins] = useState<AdminApprovalRecord[]>([]);
   const [keywordInput, setKeywordInput] = useState("");
   const [languageSelect, setLanguageSelect] = useState("");
+  const [countrySelect, setCountrySelect] = useState("");
   const [isLoadingJob, setIsLoadingJob] = useState(Boolean(editingJobId));
   const [isSavingJob, setIsSavingJob] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -3212,6 +3215,7 @@ function GlobalWorkforceJobEditor({
             instructions: job.instructions,
             keywords: job.keywords,
             status: job.status,
+            countries: job.countries.length > 0 ? job.countries : job.country ? [job.country] : [],
             country: job.country,
             openings: job.openings,
             seniority: job.seniority,
@@ -3330,6 +3334,22 @@ function GlobalWorkforceJobEditor({
     }));
   }
 
+  function addCountry() {
+    if (!countrySelect) return;
+    setJobDraft((current) => ({
+      ...current,
+      countries: Array.from(new Set([...current.countries, countrySelect])),
+    }));
+    setCountrySelect("");
+  }
+
+  function removeCountry(c: string) {
+    setJobDraft((current) => ({
+      ...current,
+      countries: current.countries.filter((x) => x !== c),
+    }));
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -3348,8 +3368,8 @@ function GlobalWorkforceJobEditor({
       return;
     }
 
-    if (!jobDraft.country.trim()) {
-      setErrorMessage("Select a country.");
+    if (jobDraft.countries.length === 0) {
+      setErrorMessage("Select at least one country.");
       return;
     }
 
@@ -3366,6 +3386,23 @@ function GlobalWorkforceJobEditor({
     if (jobDraft.pipeline === "External" && !jobDraft.referenceLink.trim()) {
       setErrorMessage("Add the External Job ID for this partner job.");
       return;
+    }
+
+    if (jobDraft.referenceLink.trim()) {
+      const externalId = jobDraft.referenceLink.trim();
+      const draftCountries = new Set(jobDraft.countries);
+      const conflictingJob = existingJobs.find((j) => {
+        if (j.id === editingJobId) return false;
+        if (j.referenceLink.trim() !== externalId) return false;
+        return j.countries.some((c) => draftCountries.has(c));
+      });
+      if (conflictingJob) {
+        const overlap = conflictingJob.countries.filter((c) => draftCountries.has(c));
+        setErrorMessage(
+          `A job with the same External Job ID already exists for ${overlap.join(", ")} (Job ID: ${conflictingJob.jobId}). Use a different External Job ID or remove the conflicting country.`,
+        );
+        return;
+      }
     }
 
     setIsSavingJob(true);
@@ -3583,24 +3620,45 @@ function GlobalWorkforceJobEditor({
               )}
             </div>
 
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-ink">Country</span>
-              <select
-                name="country"
-                value={jobDraft.country}
-                onChange={handleDraftChange}
-                required
-                className="w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition focus:border-primary"
-              >
-                <option value="">Select country</option>
-                <option value="Worldwide">Worldwide (visible to all countries)</option>
-                {countryOptions.map((country) => (
-                  <option key={country} value={country}>
-                    {country}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="space-y-2">
+              <span className="block text-sm font-medium text-ink">Countries</span>
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_80px] sm:items-center">
+                <select
+                  value={countrySelect}
+                  onChange={(e) => setCountrySelect(e.target.value)}
+                  className="w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition focus:border-primary"
+                >
+                  <option value="">Select a country</option>
+                  <option value="Worldwide">Worldwide (all countries)</option>
+                  {countryOptions.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={addCountry}
+                  className="shrink-0 inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-ink transition hover:bg-panelStrong"
+                >
+                  Add
+                </button>
+              </div>
+              {jobDraft.countries.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {jobDraft.countries.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => removeCountry(c)}
+                      className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/20"
+                    >
+                      {c} ×
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted">No countries added yet.</p>
+              )}
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -3845,6 +3903,13 @@ export function GlobalWorkforceAdminPanel({
   const [verifyingApplicationKey, setVerifyingApplicationKey] = useState<string | null>(null);
   const [activeCommissionKey, setActiveCommissionKey] = useState<string | null>(null);
   const [approvedAdmins, setApprovedAdmins] = useState<AdminApprovalRecord[]>([]);
+  const [jobSearch, setJobSearch] = useState("");
+  const [jobStatusFilter, setJobStatusFilter] = useState("all");
+  const [jobCountryFilter, setJobCountryFilter] = useState("all");
+  const [jobTypeFilter, setJobTypeFilter] = useState("all");
+  const [jobPayRateFilter, setJobPayRateFilter] = useState("all");
+  const [jobSeniorityFilter, setJobSeniorityFilter] = useState("all");
+  const [jobWorkplaceFilter, setJobWorkplaceFilter] = useState("all");
 
   useEffect(() => {
     return subscribeToGlobalWorkforcePartners((records) => setPartners(records));
@@ -4177,6 +4242,7 @@ export function GlobalWorkforceAdminPanel({
         activeUser={activeUser}
         editingJobId={editorJobIdParam === "new" ? null : editorJobIdParam}
         routeBase={routeBase}
+        existingJobs={jobs}
       />
     );
   }
@@ -4320,6 +4386,31 @@ export function GlobalWorkforceAdminPanel({
     return <GlobalWorkforcePoliciesSection />;
   }
 
+  const jobCountryOptions = useMemo(() =>
+    Array.from(new Set(
+      jobs.flatMap((j) => j.countries.length > 0 ? j.countries : j.country ? [j.country] : []).filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b)),
+  [jobs]);
+
+  const filteredJobs = useMemo(() => {
+    const q = jobSearch.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (q && !j.title.toLowerCase().includes(q) && !j.jobId.toLowerCase().includes(q)) return false;
+      if (jobStatusFilter !== "all" && j.status !== jobStatusFilter) return false;
+      if (jobCountryFilter !== "all") {
+        const jobCountries = j.countries.length > 0 ? j.countries : j.country ? [j.country] : [];
+        if (!jobCountries.includes(jobCountryFilter)) return false;
+      }
+      if (jobTypeFilter !== "all" && j.jobType !== jobTypeFilter) return false;
+      if (jobPayRateFilter !== "all" && j.payRatePeriod !== jobPayRateFilter) return false;
+      if (jobSeniorityFilter !== "all" && j.seniority !== jobSeniorityFilter) return false;
+      if (jobWorkplaceFilter !== "all" && j.workplace !== jobWorkplaceFilter) return false;
+      return true;
+    });
+  }, [jobs, jobSearch, jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobSeniorityFilter, jobWorkplaceFilter]);
+
+  const activeFilterCount = [jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobSeniorityFilter, jobWorkplaceFilter].filter((f) => f !== "all").length;
+
   return (
     <>
       <div className="space-y-4">
@@ -4343,6 +4434,42 @@ export function GlobalWorkforceAdminPanel({
             ) : null}
           </div>
         </section>
+
+        {/* Filters */}
+        {!isLoadingJobs && jobs.length > 0 ? (
+          <section className="rounded-[1.15rem] border border-slate-200 bg-white px-4 py-3 shadow-panel space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={jobSearch}
+                onChange={(e) => setJobSearch(e.target.value)}
+                placeholder="Search by title or ID…"
+                className="h-9 min-w-[180px] flex-1 rounded-full border border-slate-300 bg-white px-4 text-sm text-ink outline-none transition placeholder:text-muted/50 focus:border-primary"
+              />
+              {activeFilterCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => { setJobSearch(""); setJobStatusFilter("all"); setJobCountryFilter("all"); setJobTypeFilter("all"); setJobPayRateFilter("all"); setJobSeniorityFilter("all"); setJobWorkplaceFilter("all"); }}
+                  className="h-9 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-muted transition hover:bg-slate-100"
+                >
+                  Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
+                </button>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {([ ["Status", jobStatusFilter, setJobStatusFilter, [["all","All statuses"], ...globalWorkforceStatusOptions.map((s) => [s, s])]] , ["Country", jobCountryFilter, setJobCountryFilter, [["all","All countries"], ...jobCountryOptions.map((c) => [c, c])]] , ["Type", jobTypeFilter, setJobTypeFilter, [["all","All types"], ...globalWorkforceJobTypeOptions.map((t) => [t, t])]] , ["Pay rate", jobPayRateFilter, setJobPayRateFilter, [["all","Any rate"], ...globalWorkforcePayRateOptions.map((r) => [r, `Per ${r.toLowerCase()}`])]] , ["Seniority", jobSeniorityFilter, setJobSeniorityFilter, [["all","Any seniority"], ...globalWorkforceSeniorityOptions.map((s) => [s, s])]] , ["Workplace", jobWorkplaceFilter, setJobWorkplaceFilter, [["all","Any workplace"], ...globalWorkforceWorkplaceOptions.map((w) => [w, w])]] ] as [string, string, (v: string) => void, string[][]][]).map(([label, value, setter, opts]) => (
+                <div key={label} className="flex items-center gap-1">
+                  <select
+                    value={value}
+                    onChange={(e) => setter(e.target.value)}
+                    className={["h-9 rounded-full border px-3 text-xs font-semibold outline-none transition", value !== "all" ? "border-primary/40 bg-primary/5 text-primary" : "border-slate-200 bg-white text-ink hover:border-slate-300"].join(" ")}
+                  >
+                    {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {errorMessage ? (
           <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-4 text-sm leading-7 text-rose-900">
@@ -4377,9 +4504,15 @@ export function GlobalWorkforceAdminPanel({
           </div>
         ) : null}
 
-        {!isLoadingJobs ? (() => {
-          const openJobs = jobs.filter((j) => j.status === "Open");
-          const closedJobs = jobs.filter((j) => j.status !== "Open");
+        {!isLoadingJobs && jobs.length > 0 && filteredJobs.length === 0 ? (
+          <div className="rounded-[1rem] border border-slate-200 bg-white px-4 py-5 text-sm text-muted">
+            No jobs match your filters.
+          </div>
+        ) : null}
+
+        {!isLoadingJobs && filteredJobs.length > 0 ? (() => {
+          const openJobs = filteredJobs.filter((j) => j.status === "Open");
+          const closedJobs = filteredJobs.filter((j) => j.status !== "Open");
           const renderRow = (job: GlobalWorkforceJobPost) => (
             <JobRow
               key={job.id}
@@ -4401,7 +4534,7 @@ export function GlobalWorkforceAdminPanel({
               {closedJobs.length > 0 ? (
                 <section className="space-y-3">
                   <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                    Closed jobs · {closedJobs.length}
+                    Closed / paused · {closedJobs.length}
                   </p>
                   {closedJobs.map(renderRow)}
                 </section>

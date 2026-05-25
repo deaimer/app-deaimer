@@ -259,7 +259,6 @@ export function DeaimerSiteShell({
                 width={130}
                 height={22}
                 className="cand-light-logo h-[18px] w-auto"
-                priority
               />
               <Image
                 src="/reference-site/deaimer-logo-dark-.png"
@@ -267,7 +266,6 @@ export function DeaimerSiteShell({
                 width={130}
                 height={22}
                 className="cand-dark-logo hidden h-[18px] w-auto"
-                priority
               />
             </Link>
             <button
@@ -283,7 +281,7 @@ export function DeaimerSiteShell({
           {/* Nav list */}
           <div
             ref={sideMenuViewportRef}
-            className="relative flex-1 overflow-visible"
+            className="relative flex min-h-0 flex-1 overflow-hidden"
             onMouseLeave={() => setHoveredSideMenuLabel(null)}
           >
             <div ref={sideMenuListRef} className="h-full overflow-y-auto px-2 py-2 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
@@ -557,7 +555,6 @@ export function DeaimerSiteShell({
                 width={120}
                 height={20}
                 className="cand-light-logo h-[17px] w-auto"
-                priority
               />
               <Image
                 src="/reference-site/deaimer-logo-dark-.png"
@@ -565,7 +562,6 @@ export function DeaimerSiteShell({
                 width={120}
                 height={20}
                 className="cand-dark-logo hidden h-[17px] w-auto"
-                priority
               />
             </Link>
           </div>

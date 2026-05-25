@@ -10,6 +10,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { normalizeEmail } from "@/lib/auth/access-control";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
@@ -53,6 +54,7 @@ export interface AdminApprovalInput {
   notes: string;
   servicePermissions: AdminServicePermission[];
   profileDefaults: AdminAccessProfileDefaults;
+  assignedProjectIds?: string[];
 }
 
 export interface AdminApprovalRecord extends AdminApprovalInput {
@@ -60,6 +62,7 @@ export interface AdminApprovalRecord extends AdminApprovalInput {
   status: "approved";
   invitedByEmail: string;
   invitedByUid: string;
+  assignedProjectIds: string[];
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -201,6 +204,9 @@ function mapAdminApproval(data: DocumentData, id: string): AdminApprovalRecord {
     status: "approved",
     invitedByEmail: String(data.invitedByEmail ?? ""),
     invitedByUid: String(data.invitedByUid ?? ""),
+    assignedProjectIds: Array.isArray(data.assignedProjectIds)
+      ? data.assignedProjectIds.map(String)
+      : [],
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -257,6 +263,7 @@ export async function saveAdminApproval(user: User, approval: AdminApprovalInput
         ? {}
         : {
             createdAt: serverTimestamp(),
+            assignedProjectIds: [],
           }),
     },
     { merge: true },
@@ -318,4 +325,16 @@ export function subscribeToAdminApproval(
       onError?.(error);
     },
   );
+}
+
+export async function updateAdminProjectAssignment(
+  email: string,
+  projectIds: string[],
+): Promise<void> {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) throw new Error("Email is required.");
+  await updateDoc(buildAdminAccessRef(normalizedEmail), {
+    assignedProjectIds: projectIds,
+    updatedAt: serverTimestamp(),
+  });
 }

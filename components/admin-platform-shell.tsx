@@ -34,6 +34,11 @@ const dataCollectionSections = [
   { label: "Delivery", section: "delivery" },
 ] as const;
 
+const evalTranscriptionSections = [
+  { label: "Transcription Workers", section: "transcription-workers" },
+  { label: "QA Workers", section: "qa-workers" },
+] as const;
+
 function AdminPlatformShellContent() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -143,6 +148,17 @@ function AdminPlatformShellContent() {
       return [
         { label: "Data Collection", isSectionHeader: true } satisfies PlatformSideMenuItem,
         ...dataCollectionSections.map((item) => ({
+          label: item.label,
+          href: `/admin?service=${service.slug}&section=${item.section}`,
+          active: requestedService === service.slug && requestedSection === item.section,
+        })),
+      ];
+    }
+
+    if (service.slug === "evaluation-transcription") {
+      return [
+        { label: "Evaluation & Transcription", isSectionHeader: true } satisfies PlatformSideMenuItem,
+        ...evalTranscriptionSections.map((item) => ({
           label: item.label,
           href: `/admin?service=${service.slug}&section=${item.section}`,
           active: requestedService === service.slug && requestedSection === item.section,

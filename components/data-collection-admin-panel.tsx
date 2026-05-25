@@ -22,6 +22,11 @@ import {
   type DCSpeaker,
   type DCTranscriptionStatus,
 } from "@/lib/firebase/data-collection";
+import {
+  subscribeToAdminApprovals,
+  updateAdminProjectAssignment,
+  type AdminApprovalRecord,
+} from "@/lib/firebase/admin-access";
 
 export type DCAdminSection =
   | "projects"
@@ -345,6 +350,11 @@ function ProjectDetail({
   const [assignName, setAssignName] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState("");
+  const [adminApprovals, setAdminApprovals] = useState<AdminApprovalRecord[]>([]);
+  const [showAssignAdmin, setShowAssignAdmin] = useState(false);
+  const [assignAdminEmail, setAssignAdminEmail] = useState("");
+  const [assigningAdmin, setAssigningAdmin] = useState(false);
+  const [assignAdminError, setAssignAdminError] = useState("");
 
   const isUtterance = project.recordingMode === "utterance";
   const totalExpectedPrompts = isUtterance
@@ -354,11 +364,40 @@ function ProjectDetail({
     ? Math.min(100, totalExpectedPrompts > 0 ? (sessions.length / totalExpectedPrompts) * 100 : 0)
     : Math.min(100, (project.hoursCompleted / (project.targetHours || 1)) * 100);
 
+  const evalAdmins = adminApprovals.filter((a) => a.servicePermissions.includes("evaluation-transcription"));
+  const assignedAdmins = evalAdmins.filter((a) => a.assignedProjectIds.includes(project.id));
+  const unassignedAdmins = evalAdmins.filter((a) => !a.assignedProjectIds.includes(project.id));
+
   useEffect(() => {
     const u1 = subscribeToDCAssignmentsByProject(project.id, setAssignments);
     const u2 = subscribeToDCSessions((s) => setSessions(s.filter((x) => x.projectId === project.id)));
-    return () => { u1(); u2(); };
+    const u3 = subscribeToAdminApprovals(setAdminApprovals);
+    return () => { u1(); u2(); u3(); };
   }, [project.id]);
+
+  async function handleAssignAdmin() {
+    if (!assignAdminEmail) return;
+    setAssigningAdmin(true);
+    setAssignAdminError("");
+    try {
+      const admin = evalAdmins.find((a) => a.email === assignAdminEmail);
+      if (!admin) throw new Error("Admin not found.");
+      await updateAdminProjectAssignment(admin.email, [...admin.assignedProjectIds, project.id]);
+      setShowAssignAdmin(false);
+      setAssignAdminEmail("");
+    } catch (err) {
+      setAssignAdminError(err instanceof Error ? err.message : "Could not assign admin.");
+    } finally {
+      setAssigningAdmin(false);
+    }
+  }
+
+  async function handleRemoveAdmin(admin: AdminApprovalRecord) {
+    await updateAdminProjectAssignment(
+      admin.email,
+      admin.assignedProjectIds.filter((id) => id !== project.id),
+    );
+  }
 
   async function handleAssign(e: FormEvent) {
     e.preventDefault();
@@ -574,6 +613,97 @@ function ProjectDetail({
           </div>
         );
       })()}
+
+      {/* Assigned Admins */}
+      {isSuperAdmin && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-ink">Assigned Admins ({assignedAdmins.length})</h3>
+            <button
+              type="button"
+              onClick={() => { setShowAssignAdmin(true); setAssignAdminEmail(""); setAssignAdminError(""); }}
+              disabled={unassignedAdmins.length === 0}
+              className="rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primaryStrong disabled:opacity-40"
+            >
+              + Assign Admin
+            </button>
+          </div>
+          {assignedAdmins.length === 0 ? (
+            <EmptyState message="No admins assigned to this project yet." />
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                    {["Name", "Email", "Company", ""].map((h) => (
+                      <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {assignedAdmins.map((a) => (
+                    <tr key={a.email} className="group hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{a.contactName || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{a.email}</td>
+                      <td className="px-4 py-3 text-muted">{a.company || "—"}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveAdmin(a)}
+                          className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-700 opacity-0 group-hover:opacity-100 hover:bg-rose-50"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <SlidePanel title="Assign Admin to Project" open={showAssignAdmin} onClose={() => setShowAssignAdmin(false)}>
+            <div className="space-y-4">
+              <p className="text-sm text-muted">
+                Select an admin with <strong>Evaluation &amp; Transcription</strong> access to assign to this project.
+                They will then be able to invite transcription and QA workers scoped to this project.
+              </p>
+              {assignAdminError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{assignAdminError}</div>
+              )}
+              {unassignedAdmins.length === 0 ? (
+                <p className="text-sm text-muted italic">All eligible admins are already assigned to this project.</p>
+              ) : (
+                <div className="space-y-1">
+                  {unassignedAdmins.map((a) => (
+                    <label key={a.email} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 hover:border-primary/30 text-sm">
+                      <input
+                        type="radio"
+                        name="adminEmail"
+                        value={a.email}
+                        checked={assignAdminEmail === a.email}
+                        onChange={() => setAssignAdminEmail(a.email)}
+                        className="accent-primary"
+                      />
+                      <div>
+                        <p className="font-medium text-ink">{a.contactName || a.email}</p>
+                        <p className="text-[11px] text-muted">{a.email} · {a.company}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={!assignAdminEmail || assigningAdmin}
+                onClick={() => void handleAssignAdmin()}
+                className="inline-flex w-full items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-50"
+              >
+                {assigningAdmin ? "Assigning…" : "Assign Admin"}
+              </button>
+            </div>
+          </SlidePanel>
+        </div>
+      )}
 
       <h3 className="font-semibold text-ink">Sessions ({sessions.length})</h3>
       {sessions.length === 0 ? (

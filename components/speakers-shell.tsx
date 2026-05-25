@@ -1409,6 +1409,7 @@ function ReRecordFlow({
         age: speaker.age,
         dialect: speaker.dialect,
         region: speaker.region,
+        submissionCount: (session.submissionCount ?? 0) + 1,
       });
       setUploadedSet((prev) => new Set(prev).add(currentIdx));
     } catch (e) {
@@ -1443,6 +1444,7 @@ function ReRecordFlow({
             age: speaker.age,
             dialect: speaker.dialect,
             region: speaker.region,
+            submissionCount: (s.submissionCount ?? 0) + 1,
           });
         }
       }
@@ -3729,6 +3731,7 @@ function SpeakerPortal({ user }: { user: User }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
   const [geoBlocked, setGeoBlocked] = useState(false);
   const [geoDetectedCountry, setGeoDetectedCountry] = useState("");
+  const [speakerTheme, setSpeakerTheme] = useState<"light" | "dark">("light");
 
   // Projects navigation state
   const [activeAssignment, setActiveAssignment] = useState<DCAssignment | null>(null);
@@ -3747,6 +3750,16 @@ function SpeakerPortal({ user }: { user: User }) {
     setActiveProject(null);
     setActiveTask(null);
     router.push(`/speakers?section=${s}`);
+  }
+
+  useEffect(() => {
+    const saved = localStorage.getItem("deaimer-speaker-theme");
+    if (saved === "dark" || saved === "light") setSpeakerTheme(saved);
+  }, []);
+
+  function handleSpeakerThemeChange(theme: "light" | "dark") {
+    setSpeakerTheme(theme);
+    localStorage.setItem("deaimer-speaker-theme", theme);
   }
 
   useEffect(() => {
@@ -3996,11 +4009,16 @@ function SpeakerPortal({ user }: { user: User }) {
     return <MyProjects assignments={assignments} onSelect={(a) => setActiveAssignment(a)} />;
   }
 
-  return (
+  const themeClass = speakerTheme === "dark" ? "cand-dark" : "";
+  const shell = (
     <DeaimerSiteShell
       platformSideMenuItems={speakerMenuItems}
       userProfile={userProfile}
       onSignOut={() => void handleSignOut()}
+      themeToggle={{
+        theme: speakerTheme,
+        onToggle: () => handleSpeakerThemeChange(speakerTheme === "dark" ? "light" : "dark"),
+      }}
     >
       <main className="min-h-screen bg-background text-ink">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
@@ -4037,6 +4055,7 @@ function SpeakerPortal({ user }: { user: User }) {
       </main>
     </DeaimerSiteShell>
   );
+  return themeClass ? <div className={themeClass}>{shell}</div> : shell;
 }
 
 // ─── Auth gate / sign-in ──────────────────────────────────────────────────────

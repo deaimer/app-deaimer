@@ -47,6 +47,10 @@ import {
   DataCollectionAdminPanel,
   type DCAdminSection,
 } from "@/components/data-collection-admin-panel";
+import {
+  EvalTranscriptionPanel,
+  type EvalTranscriptionSection,
+} from "@/components/eval-transcription-panel";
 
 const fieldClassName =
   "w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary";
@@ -623,6 +627,13 @@ export function AdminPortalWorkspace({
           )
             ? requestedSection
             : "projects") as DCAdminSection)
+      : null;
+
+  const selectedEvalSection =
+    selectedServiceSlug === "evaluation-transcription"
+      ? ((["transcription-workers", "qa-workers"].includes(requestedSection ?? "")
+            ? requestedSection
+            : "transcription-workers") as EvalTranscriptionSection)
       : null;
 
   const selectedProfileSectionConfig = profileSections.find(
@@ -2572,11 +2583,20 @@ export function AdminPortalWorkspace({
               />
             ) : null}
 
+            {selectedServiceSlug === "evaluation-transcription" ? (
+              <EvalTranscriptionPanel
+                activeUser={activeUser}
+                activeSection={selectedEvalSection ?? "transcription-workers"}
+                isSuperAdmin={isSuperAdminEmail(activeUser.email)}
+              />
+            ) : null}
+
             {selectedServiceSlug &&
             selectedServiceSlug !== "profile" &&
             selectedServiceSlug !== "requests" &&
             selectedServiceSlug !== "global-managed-workforce" &&
-            selectedServiceSlug !== "data-collection-sourcing"
+            selectedServiceSlug !== "data-collection-sourcing" &&
+            selectedServiceSlug !== "evaluation-transcription"
               ? renderPlaceholderService()
               : null}
         </div>

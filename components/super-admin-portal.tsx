@@ -699,39 +699,42 @@ function AccessPanel({
             ) : null}
 
             {target === "admins" && activeAdminDefaultsTab === "services" ? (
-              <div className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
-                <p className="text-sm font-semibold text-ink">Service permissions</p>
-                <p className="mt-2 text-sm leading-7 text-muted">
-                  Choose which of the five Deaimer services this admin can see in
-                  the admin sidebar.
-                </p>
+              <>
+                <div className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
+                  <p className="text-sm font-semibold text-ink">Service permissions</p>
+                  <p className="mt-2 text-sm leading-7 text-muted">
+                    Choose which of the five Deaimer services this admin can see in
+                    the admin sidebar.
+                  </p>
 
-                <div className="mt-4 space-y-3">
-                  {servicePages.map((service) => {
-                    const isSelected = draft.servicePermissions.includes(service.slug);
+                  <div className="mt-4 space-y-3">
+                    {servicePages.map((service) => {
+                      const isSelected = draft.servicePermissions.includes(service.slug);
 
-                    return (
-                      <label
-                        key={service.slug}
-                        className="flex cursor-pointer items-start gap-3 rounded-[0.95rem] border border-slate-200 bg-white px-4 py-3 transition hover:border-primary/20"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => onToggleServicePermission(service.slug)}
-                          className="mt-1 h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
-                        />
-                        <div>
-                          <p className="text-sm font-semibold text-ink">{service.title}</p>
-                          <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted">
-                            {service.eyebrow}
-                          </p>
-                        </div>
-                      </label>
-                    );
-                  })}
+                      return (
+                        <label
+                          key={service.slug}
+                          className="flex cursor-pointer items-start gap-3 rounded-[0.95rem] border border-slate-200 bg-white px-4 py-3 transition hover:border-primary/20"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => onToggleServicePermission(service.slug)}
+                            className="mt-1 h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                          />
+                          <div>
+                            <p className="text-sm font-semibold text-ink">{service.title}</p>
+                            <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted">
+                              {service.eyebrow}
+                            </p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+
+              </>
             ) : null}
 
             {target === "admins" && ["role", "pay", "policies"].includes(activeAdminDefaultsTab) ? (
@@ -2085,6 +2088,7 @@ export function SuperAdminPortal({
 
     return unsubscribe;
   }, [activeUser, firebaseReady, hasMounted]);
+
 
   useEffect(() => {
     if (activeAccessMode === "edit") {

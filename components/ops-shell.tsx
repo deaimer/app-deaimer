@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import {
   DeaimerSiteShell,
@@ -14,6 +14,7 @@ import {
   resolveFirebaseRedirectSignIn,
   signInWithGoogle,
 } from "@/lib/firebase/client";
+import { PlatformAuthPage } from "@/components/platform-auth-page";
 import { isSuperAdminEmail } from "@/lib/auth/access-control";
 import {
   subscribeToDCProjects,
@@ -35,6 +36,7 @@ import {
   type OpsRole,
   type OpsWorker,
 } from "@/lib/firebase/ops-data";
+import { subscribeToAdminApproval } from "@/lib/firebase/admin-access";
 import {
   downloadBlob,
   generateDeliveryCSV,
@@ -256,7 +258,7 @@ function TranscriptionSection({
     );
   }
 
-  const withAudio = sessions.filter((s) => Boolean(s.audioUrl));
+  const withAudio = sessions.filter((s) => Boolean(s.audioUrl) && s.qaStatus === "approved");
   const filtered = withAudio.filter((s) => {
     const matchFilter =
       filter === "all" ||
@@ -310,7 +312,7 @@ function TranscriptionSection({
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState message={filter === "pending" ? "No sessions pending transcription." : "No sessions match this filter."} />
+        <EmptyState message={filter === "pending" ? "No QA-approved sessions awaiting transcription." : "No sessions match this filter."} />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="min-w-full text-sm">
@@ -399,6 +401,11 @@ function QAWorkspace({
       <div className="flex items-center gap-3">
         <button type="button" onClick={onBack} className="text-sm font-medium text-muted hover:text-primary">← Queue</button>
         <StatusBadge status={session.qaStatus} />
+        {session.submissionCount > 0 && (
+          <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
+            Resubmission #{session.submissionCount}
+          </span>
+        )}
       </div>
 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5 space-y-3">
@@ -418,21 +425,14 @@ function QAWorkspace({
         <audio controls src={session.audioUrl} className="w-full rounded-xl" />
       </div>
 
-      {session.transcriptText ? (
-        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-4 space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-muted">Verbatim Transcript</p>
-          <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">{session.transcriptText}</p>
-        </div>
-      ) : (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          No transcript available — transcription may not be complete.
-        </div>
-      )}
+      <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+        Listen to the audio above and assess quality — clarity, noise level, correct prompt coverage. Approve to send to transcription, or reject with a note.
+      </div>
 
       {!isDecided && (
         <div className="rounded-[1.25rem] border border-slate-200 bg-white p-5 space-y-4">
           <div>
-            <p className="mb-2 text-[13px] font-medium text-ink">Quality Score (1–5)</p>
+            <p className="mb-2 text-[13px] font-medium text-ink">Audio Quality Score (1–5)</p>
             <div className="flex gap-2">
               {[1, 2, 3, 4, 5].map((n) => (
                 <button
@@ -496,8 +496,8 @@ function QASection({
     return <QAWorkspace session={selected} workerEmail={workerEmail} onBack={() => setSelected(null)} />;
   }
 
-  const qaable = sessions.filter((s) => Boolean(s.audioUrl) && s.transcriptionStatus === "completed");
   const allWithAudio = sessions.filter((s) => Boolean(s.audioUrl));
+  const qaable = allWithAudio.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
 
   const filtered = allWithAudio.filter((s) => {
     const matchFilter =
@@ -532,8 +532,8 @@ function QASection({
         <div>
           <h2 className="text-xl font-semibold text-ink">QA Queue</h2>
           <p className="mt-0.5 text-sm text-muted">
-            Review transcribed sessions — approve or reject with a score.
-            {qaable.length > 0 && <span className="ml-2 font-medium text-primary">{qaable.length} ready to review</span>}
+            Review audio quality before transcription — approve to unlock transcription, reject to flag.
+            {qaable.length > 0 && <span className="ml-2 font-medium text-primary">{qaable.length} pending review</span>}
           </p>
         </div>
         <input
@@ -564,7 +564,7 @@ function QASection({
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Project", "Speaker", "Prompt", "Duration", "Transcript", "QA Status", "Score", "Date", ""].map((h) => (
+                {["Project", "Speaker", "Prompt", "Duration", "QA Status", "Score", "Date", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -574,9 +574,15 @@ function QASection({
                 <tr key={s.id} className="hover:bg-panelStrong/40">
                   <td className="px-4 py-3 font-medium text-ink">{s.projectName}</td>
                   <td className="px-4 py-3 text-muted">{s.speakerName || s.speakerId}</td>
-                  <td className="max-w-[180px] truncate px-4 py-3 text-muted">{s.promptText ?? "—"}</td>
+                  <td className="max-w-[180px] px-4 py-3 text-muted">
+                    <span className="block truncate">{s.promptText ?? "—"}</span>
+                    {s.submissionCount > 0 && (
+                      <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                        Resubmission #{s.submissionCount}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
-                  <td className="max-w-[160px] truncate px-4 py-3 text-muted text-xs">{s.transcriptText || "—"}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
                   <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "—"}</td>
                   <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
@@ -584,9 +590,7 @@ function QASection({
                     <button
                       type="button"
                       onClick={() => setSelected(s)}
-                      disabled={s.transcriptionStatus !== "completed"}
-                      className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-40"
-                      title={s.transcriptionStatus !== "completed" ? "Transcription not complete" : ""}
+                      className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                     >
                       Review →
                     </button>
@@ -615,21 +619,22 @@ function DashboardSection({
   onNavigate: (s: OpsSection) => void;
 }) {
   const withAudio = sessions.filter((s) => Boolean(s.audioUrl));
-  const pendingTranscription = withAudio.filter((s) => s.transcriptionStatus === "pending").length;
-  const inProgressTranscription = withAudio.filter((s) => s.transcriptionStatus === "human-review").length;
-  const completedTranscription = withAudio.filter((s) => s.transcriptionStatus === "completed").length;
-  const pendingQA = withAudio.filter((s) => s.transcriptionStatus === "completed" && s.qaStatus === "pending").length;
+  const pendingQA = withAudio.filter((s) => s.qaStatus === "pending").length;
+  const inReviewQA = withAudio.filter((s) => s.qaStatus === "in-review").length;
   const approvedQA = withAudio.filter((s) => s.qaStatus === "approved").length;
   const rejectedQA = withAudio.filter((s) => s.qaStatus === "rejected").length;
+  const pendingTranscription = withAudio.filter((s) => s.qaStatus === "approved" && s.transcriptionStatus === "pending").length;
+  const inProgressTranscription = withAudio.filter((s) => s.qaStatus === "approved" && s.transcriptionStatus === "human-review").length;
+  const completedTranscription = withAudio.filter((s) => s.transcriptionStatus === "completed").length;
 
   const canTranscribe = isSuperAdmin || (worker?.roles ?? []).includes("transcription");
   const canQA = isSuperAdmin || (worker?.roles ?? []).includes("qa");
 
   const stats = [
+    { label: "Pending QA", value: String(pendingQA), sub: `${inReviewQA} in review`, show: canQA, section: "qa" as OpsSection },
+    { label: "QA Approved", value: String(approvedQA), sub: `${rejectedQA} rejected`, show: canQA, section: "qa" as OpsSection },
     { label: "Pending Transcription", value: String(pendingTranscription), sub: `${inProgressTranscription} in progress`, show: canTranscribe, section: "transcription" as OpsSection },
-    { label: "Transcribed", value: String(completedTranscription), sub: "All done", show: canTranscribe, section: "transcription" as OpsSection },
-    { label: "Pending QA", value: String(pendingQA), sub: "Ready to review", show: canQA, section: "qa" as OpsSection },
-    { label: "Approved", value: String(approvedQA), sub: `${rejectedQA} rejected`, show: canQA, section: "qa" as OpsSection },
+    { label: "Transcribed", value: String(completedTranscription), sub: "Complete", show: canTranscribe, section: "transcription" as OpsSection },
   ].filter((s) => s.show);
 
   return (
@@ -724,7 +729,7 @@ function WorkersSection({
     setSaving(true);
     setFormError("");
     try {
-      await saveOpsWorker(email, name, roles, projectIds, activeUser.email ?? "", activeUser.uid);
+      await saveOpsWorker(email, name, roles, projectIds, activeUser.email ?? "", activeUser.uid, undefined, undefined, !editTarget);
       setShowPanel(false);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to save worker.");
@@ -1007,26 +1012,49 @@ function OpsPortal({
   user,
   worker,
   isSuperAdmin,
-  initialSection,
-  initialProjectId,
+  section,
+  projectId,
 }: {
   user: User;
   worker: OpsWorker | null;
   isSuperAdmin: boolean;
-  initialSection: OpsSection;
-  initialProjectId: string | null;
+  section: OpsSection;
+  projectId: string | null;
 }) {
   const router = useRouter();
-  const [section, setSection] = useState<OpsSection>(initialSection);
   const [sessions, setSessions] = useState<DCSession[]>([]);
   const [projects, setProjects] = useState<DCProject[]>([]);
   const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
+  const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(null);
+  const [opsTheme, setOpsTheme] = useState<"light" | "dark">("light");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("deaimer-ops-theme");
+    if (saved === "dark" || saved === "light") setOpsTheme(saved);
+  }, []);
+
+  function handleOpsThemeChange(theme: "light" | "dark") {
+    setOpsTheme(theme);
+    localStorage.setItem("deaimer-ops-theme", theme);
+  }
 
   useEffect(() => {
     const u2 = subscribeToDCProjects(setProjects);
     const u3 = subscribeToDCSpeakers(setSpeakers);
     return () => { u2(); u3(); };
   }, []);
+
+  // For admin-invited workers: subscribe to the inviting admin's assignedProjectIds
+  // so we can intersect them with the worker's own assignedProjectIds
+  useEffect(() => {
+    if (!worker || worker.invitedByRole !== "admin" || !worker.invitedByAdminEmail) {
+      setAdminProjectIds(null);
+      return;
+    }
+    return subscribeToAdminApproval(worker.invitedByAdminEmail, (approval) => {
+      setAdminProjectIds(approval?.assignedProjectIds ?? []);
+    });
+  }, [worker?.invitedByAdminEmail, worker?.invitedByRole]);
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -1036,11 +1064,19 @@ function OpsPortal({
       setSessions([]);
       return;
     }
-    return subscribeToDCSessionsByProjects(worker.assignedProjectIds, setSessions);
-  }, [isSuperAdmin, worker?.assignedProjectIds.join(",")]);
+    // Admin-invited workers: scope to intersection of worker projects AND admin's projects
+    const effectiveProjectIds = worker.invitedByRole === "admin" && adminProjectIds !== null
+      ? worker.assignedProjectIds.filter((id) => adminProjectIds.includes(id))
+      : worker.assignedProjectIds;
+
+    if (effectiveProjectIds.length === 0) {
+      setSessions([]);
+      return;
+    }
+    return subscribeToDCSessionsByProjects(effectiveProjectIds, setSessions);
+  }, [isSuperAdmin, worker?.assignedProjectIds.join(","), adminProjectIds?.join(",")]);
 
   function navigateTo(s: OpsSection) {
-    setSection(s);
     router.replace(`/ops?section=${s}`, { scroll: false });
   }
 
@@ -1097,10 +1133,16 @@ function OpsPortal({
     }
   })();
 
-  return (
+  const themeClass = opsTheme === "dark" ? "cand-dark" : "";
+  const shell = (
     <DeaimerSiteShell
       platformSideMenuItems={sideMenuItems}
       userProfile={userProfile}
+      onSignOut={handleSignOut}
+      themeToggle={{
+        theme: opsTheme,
+        onToggle: () => handleOpsThemeChange(opsTheme === "dark" ? "light" : "dark"),
+      }}
     >
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -1109,16 +1151,17 @@ function OpsPortal({
       </div>
     </DeaimerSiteShell>
   );
+  return themeClass ? <div className={themeClass}>{shell}</div> : shell;
 }
 
 // ─── Auth wrapper ─────────────────────────────────────────────────────────────
 
 function OpsShellContent({
-  initialSection,
-  initialProjectId,
+  section,
+  projectId,
 }: {
-  initialSection: OpsSection;
-  initialProjectId: string | null;
+  section: OpsSection;
+  projectId: string | null;
 }) {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
@@ -1182,28 +1225,38 @@ function OpsShellContent({
 
   if (!user) {
     return (
-      <DeaimerSiteShell>
-        <div className="flex min-h-[80vh] flex-col items-center justify-center px-4 text-center">
-          <p className="text-xs font-semibold uppercase tracking-widest text-primary">Ops Portal</p>
-          <h1 className="mt-3 text-2xl font-semibold text-ink">Sign in to continue</h1>
-          <p className="mt-2 max-w-sm text-sm text-muted">Access is restricted to authorised transcription and QA workers.</p>
-          {authError && <p className="mt-3 text-sm text-rose-600">{authError}</p>}
+      <PlatformAuthPage
+        title="Ops Portal"
+        subtitle="Access is restricted to authorised transcription and QA workers."
+        hideForm
+        email=""
+        password=""
+        submitLabel=""
+        onEmailChange={() => {}}
+        onPasswordChange={() => {}}
+        onSubmit={(e) => e.preventDefault()}
+        errorMessage={authError || undefined}
+        oauthAction={
           <button
             type="button"
             disabled={signingIn}
             onClick={() => void handleGoogleSignIn()}
-            className="mt-6 inline-flex items-center gap-3 rounded-full border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-ink shadow-sm hover:bg-panelStrong disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-3 rounded-[10px] border border-[#e5ecf3] bg-white px-4 py-[13px] text-sm font-semibold text-[#0a1628] transition hover:bg-[#f6f9fc] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
-              <path d="M44.5 20H24v8.5h11.7C34.2 33.3 29.6 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l6-6C34.5 6.5 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.2-2.7-.2-4z" fill="#4285F4"/>
-              <path d="M6.3 14.7l7 5.1C15 16.2 19.2 13 24 13c3 0 5.7 1.1 7.8 2.9l6-6C34.5 6.5 29.6 4 24 4 16.2 4 9.6 8.4 6.3 14.7z" fill="#EA4335"/>
-              <path d="M24 44c5.5 0 10.5-1.8 14.4-5l-6.7-5.5C29.6 35.3 27 36 24 36c-5.6 0-10.2-3.7-11.7-8.5L6.2 33c3.2 6.4 9.9 11 17.8 11z" fill="#34A853"/>
-              <path d="M44.5 20H24v8.5h11.7c-.7 2-2.1 3.7-3.8 4.9L38.5 39c4.1-3.8 6.5-9.4 6.5-15 0-1.3-.2-2.7-.2-4z" fill="#FBBC05"/>
-            </svg>
+            {signingIn ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#d0dbe8] border-t-[#2b85f0]" />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 48 48" fill="none">
+                <path d="M44.5 20H24v8.5h11.7C34.2 33.3 29.6 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l6-6C34.5 6.5 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.2-2.7-.2-4z" fill="#4285F4"/>
+                <path d="M6.3 14.7l7 5.1C15 16.2 19.2 13 24 13c3 0 5.7 1.1 7.8 2.9l6-6C34.5 6.5 29.6 4 24 4 16.2 4 9.6 8.4 6.3 14.7z" fill="#EA4335"/>
+                <path d="M24 44c5.5 0 10.5-1.8 14.4-5l-6.7-5.5C29.6 35.3 27 36 24 36c-5.6 0-10.2-3.7-11.7-8.5L6.2 33c3.2 6.4 9.9 11 17.8 11z" fill="#34A853"/>
+                <path d="M44.5 20H24v8.5h11.7c-.7 2-2.1 3.7-3.8 4.9L38.5 39c4.1-3.8 6.5-9.4 6.5-15 0-1.3-.2-2.7-.2-4z" fill="#FBBC05"/>
+              </svg>
+            )}
             {signingIn ? "Signing in…" : "Continue with Google"}
           </button>
-        </div>
-      </DeaimerSiteShell>
+        }
+      />
     );
   }
 
@@ -1237,18 +1290,19 @@ function OpsShellContent({
       user={user}
       worker={isSuperAdmin ? null : worker}
       isSuperAdmin={isSuperAdmin}
-      initialSection={initialSection}
-      initialProjectId={initialProjectId}
+      section={section}
+      projectId={projectId}
     />
   );
 }
 
-export function OpsShell({
-  initialSection,
-  initialProjectId,
-}: {
-  initialSection: OpsSection;
-  initialProjectId: string | null;
-}) {
-  return <OpsShellContent initialSection={initialSection} initialProjectId={initialProjectId} />;
+export function OpsShell() {
+  const searchParams = useSearchParams();
+  const sectionParam = searchParams.get("section");
+  const VALID: OpsSection[] = ["dashboard", "transcription", "qa", "workers", "exports"];
+  const section: OpsSection = VALID.includes(sectionParam as OpsSection)
+    ? (sectionParam as OpsSection)
+    : "dashboard";
+  const projectId = searchParams.get("project");
+  return <OpsShellContent section={section} projectId={projectId} />;
 }

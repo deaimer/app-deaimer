@@ -111,6 +111,7 @@ export interface GlobalWorkforceJobDraft {
   instructions: string;
   keywords: string[];
   status: string;
+  countries: string[];
   country: string;
   openings: number;
   seniority: string;
@@ -173,6 +174,7 @@ export const emptyGlobalWorkforceJobDraft: GlobalWorkforceJobDraft = {
   instructions: "",
   keywords: [],
   status: "Open",
+  countries: [],
   country: "",
   openings: 1,
   seniority: "Middle to Senior Level",
@@ -274,7 +276,14 @@ function mapJobPost(data: DocumentData, id: string): GlobalWorkforceJobPost {
     description: String(data.description ?? ""),
     keywords: normalizeKeywords(data.keywords),
     status: String(data.status ?? "Open"),
-    country: String(data.country ?? ""),
+    countries: Array.isArray(data.countries)
+      ? data.countries.map(String).filter(Boolean)
+      : data.country
+        ? [String(data.country)]
+        : [],
+    country: Array.isArray(data.countries) && data.countries.length > 0
+      ? String(data.countries[0])
+      : String(data.country ?? ""),
     openings: Math.max(1, Number(data.openings ?? 1)),
     seniority: String(data.seniority ?? ""),
     payMin,
@@ -382,7 +391,8 @@ export async function saveGlobalWorkforceJobPost(
       keywords: normalizedKeywords,
       compensation,
       status: draft.status.trim(),
-      country: draft.country.trim(),
+      countries: draft.countries.filter(Boolean),
+      country: draft.countries[0]?.trim() ?? draft.country.trim(),
       openings: Math.max(1, Math.round(Number(draft.openings) || 1)),
       seniority: draft.seniority.trim(),
       payMin,

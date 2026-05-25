@@ -4,6 +4,7 @@ import { FormEvent, ReactNode } from "react";
 
 type PlatformAuthPageProps = {
   title: string;
+  subtitle?: string;
   email: string;
   password: string;
   confirmPassword?: string;
@@ -16,6 +17,7 @@ type PlatformAuthPageProps = {
   notice?: ReactNode;
   oauthAction?: ReactNode;
   secondaryAction?: ReactNode;
+  hideForm?: boolean;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onConfirmPasswordChange?: (value: string) => void;
@@ -24,6 +26,7 @@ type PlatformAuthPageProps = {
 
 export function PlatformAuthPage({
   title,
+  subtitle,
   email,
   password,
   confirmPassword,
@@ -36,6 +39,7 @@ export function PlatformAuthPage({
   notice,
   oauthAction,
   secondaryAction,
+  hideForm = false,
   onEmailChange,
   onPasswordChange,
   onConfirmPasswordChange,
@@ -92,9 +96,15 @@ export function PlatformAuthPage({
 
       <section className="flex items-center justify-center px-6 py-10 md:min-h-screen md:px-10">
         <div className="w-full max-w-[380px]">
-          <h1 className="mb-8 text-center font-[var(--font-display)] text-[30px] font-normal leading-[1.1] text-[#0a1628]">
+          <h1 className="mb-2 text-center font-[var(--font-display)] text-[30px] font-normal leading-[1.1] text-[#0a1628]">
             {title}
           </h1>
+
+          {subtitle ? (
+            <p className="mb-8 text-center text-sm leading-6 text-[#6b7c93]">{subtitle}</p>
+          ) : (
+            <div className="mb-8" />
+          )}
 
           {notice ? (
             <div className="mb-5 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
@@ -117,17 +127,19 @@ export function PlatformAuthPage({
           {oauthAction ? (
             <>
               <div className="mb-5">{oauthAction}</div>
-              <div className="mb-5 flex items-center gap-3">
-                <span className="h-px flex-1 bg-[#e5ecf3]" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8a9bb0]">
-                  or
-                </span>
-                <span className="h-px flex-1 bg-[#e5ecf3]" />
-              </div>
+              {!hideForm && (
+                <div className="mb-5 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-[#e5ecf3]" />
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8a9bb0]">
+                    or
+                  </span>
+                  <span className="h-px flex-1 bg-[#e5ecf3]" />
+                </div>
+              )}
             </>
           ) : null}
 
-          <form onSubmit={onSubmit}>
+          {!hideForm && <form onSubmit={onSubmit}>
             <label className="mb-[18px] block">
               <span className="mb-[7px] block text-[13px] font-medium text-[#1f3045]">
                 Email <span className="text-[#2b85f0]">*</span>
@@ -183,7 +195,7 @@ export function PlatformAuthPage({
             >
               {isSubmitting ? "Working..." : submitLabel}
             </button>
-          </form>
+          </form>}
         </div>
       </section>
     </main>

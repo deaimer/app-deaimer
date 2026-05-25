@@ -180,6 +180,7 @@ export interface DCSession {
   qaScore: number | null;
   qaNote: string;
   flags: string[];
+  submissionCount: number;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -202,6 +203,7 @@ export interface DCSessionInput {
   age: string;
   dialect: string;
   region: string;
+  submissionCount?: number;
 }
 
 // ─── Mappers ──────────────────────────────────────────────────────────────────
@@ -428,6 +430,7 @@ function mapSession(data: DocumentData, id: string): DCSession {
     qaScore: data.qaScore != null ? Number(data.qaScore) : null,
     qaNote: String(data.qaNote ?? ""),
     flags: Array.isArray(data.flags) ? data.flags.map(String) : [],
+    submissionCount: Number(data.submissionCount ?? 0),
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -755,6 +758,7 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
     qaScore: null,
     qaNote: "",
     flags: [],
+    submissionCount: input.submissionCount ?? 0,
     createdAt: serverTimestamp(),
   });
 
@@ -1065,6 +1069,7 @@ export async function submitConvSession(input: DCSessionInput): Promise<string> 
     qaScore: null,
     qaNote: "",
     flags: [],
+    submissionCount: input.submissionCount ?? 0,
     createdAt: serverTimestamp(),
   });
 

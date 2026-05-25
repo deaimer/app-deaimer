@@ -1,18 +1,19 @@
 import {
   collection,
   doc,
-  getDoc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   type DocumentData,
 } from "firebase/firestore";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
 
 export type OpsRole = "transcription" | "qa" | "delivery";
+export type OpsInvitedByRole = "super" | "admin";
 
 export interface OpsWorker {
   email: string;
@@ -22,6 +23,8 @@ export interface OpsWorker {
   status: "active" | "paused";
   invitedByEmail: string;
   invitedByUid: string;
+  invitedByRole: OpsInvitedByRole;
+  invitedByAdminEmail?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -47,6 +50,8 @@ function mapWorker(data: DocumentData, id: string): OpsWorker {
     status: data.status === "paused" ? "paused" : "active",
     invitedByEmail: String(data.invitedByEmail ?? ""),
     invitedByUid: String(data.invitedByUid ?? ""),
+    invitedByRole: data.invitedByRole === "admin" ? "admin" : "super",
+    invitedByAdminEmail: data.invitedByAdminEmail ? String(data.invitedByAdminEmail) : undefined,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -59,10 +64,12 @@ export async function saveOpsWorker(
   assignedProjectIds: string[],
   inviterEmail: string,
   inviterUid: string,
+  invitedByRole: OpsInvitedByRole = "super",
+  invitedByAdminEmail?: string,
+  isNewWorker?: boolean,
 ): Promise<void> {
   const normalized = email.trim().toLowerCase();
   const ref = doc(db(), "opsWorkers", normalized);
-  const existing = await getDoc(ref);
   await setDoc(
     ref,
     {
@@ -73,8 +80,10 @@ export async function saveOpsWorker(
       status: "active",
       invitedByEmail: inviterEmail,
       invitedByUid: inviterUid,
+      invitedByRole,
+      ...(invitedByAdminEmail ? { invitedByAdminEmail: invitedByAdminEmail.trim().toLowerCase() } : {}),
       updatedAt: serverTimestamp(),
-      ...(!existing.exists() ? { createdAt: serverTimestamp() } : {}),
+      ...(isNewWorker ? { createdAt: serverTimestamp() } : {}),
     },
     { merge: true },
   );
@@ -109,5 +118,22 @@ export function subscribeToOpsWorkerByEmail(
   return onSnapshot(
     doc(db(), "opsWorkers", email.trim().toLowerCase()),
     (snap) => callback(snap.exists() ? mapWorker(snap.data(), snap.id) : null),
+  );
+}
+
+export function subscribeToOpsWorkersByAdminEmail(
+  adminEmail: string,
+  callback: (workers: OpsWorker[]) => void,
+  onError?: (err: Error) => void,
+) {
+  const q = query(
+    collection(db(), "opsWorkers"),
+    where("invitedByAdminEmail", "==", adminEmail.trim().toLowerCase()),
+    orderBy("createdAt", "desc"),
+  );
+  return onSnapshot(
+    q,
+    (snap) => callback(snap.docs.map((d) => mapWorker(d.data(), d.id))),
+    onError,
   );
 }
