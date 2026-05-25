@@ -54,6 +54,18 @@ import {
 } from "@/lib/firebase/admin-access";
 import { servicePages } from "@/lib/service-pages";
 
+const jobPayRateRangeOptions: { value: string; label: string; min: number; max: number | null }[] = [
+  { value: "0-10",   label: "Under $10",      min: 0,   max: 10   },
+  { value: "10-20",  label: "$10 – $20",      min: 10,  max: 20   },
+  { value: "20-35",  label: "$20 – $35",      min: 20,  max: 35   },
+  { value: "35-50",  label: "$35 – $50",      min: 35,  max: 50   },
+  { value: "50-75",  label: "$50 – $75",      min: 50,  max: 75   },
+  { value: "75-100", label: "$75 – $100",     min: 75,  max: 100  },
+  { value: "100-150",label: "$100 – $150",    min: 100, max: 150  },
+  { value: "150-200",label: "$150 – $200",    min: 150, max: 200  },
+  { value: "200+",   label: "$200+",          min: 200, max: null },
+];
+
 export type GlobalWorkforceAdminSection =
   | "dashboard"
   | "job-posts"
@@ -3907,9 +3919,7 @@ export function GlobalWorkforceAdminPanel({
   const [jobStatusFilter, setJobStatusFilter] = useState("all");
   const [jobCountryFilter, setJobCountryFilter] = useState("all");
   const [jobTypeFilter, setJobTypeFilter] = useState("all");
-  const [jobPayRateFilter, setJobPayRateFilter] = useState("all");
-  const [jobPayMinFilter, setJobPayMinFilter] = useState("");
-  const [jobPayMaxFilter, setJobPayMaxFilter] = useState("");
+  const [jobPayRangeFilter, setJobPayRangeFilter] = useState("all");
   const [jobSeniorityFilter, setJobSeniorityFilter] = useState("all");
   const [jobWorkplaceFilter, setJobWorkplaceFilter] = useState("all");
 
@@ -4246,21 +4256,21 @@ export function GlobalWorkforceAdminPanel({
 
   const filteredJobs = useMemo(() => {
     const q = jobSearch.trim().toLowerCase();
-    const parsedPayMin = jobPayMinFilter !== "" ? Number(jobPayMinFilter) : null;
-    const parsedPayMax = jobPayMaxFilter !== "" ? Number(jobPayMaxFilter) : null;
+    const rangeEntry = jobPayRateRangeOptions.find((r) => r.value === jobPayRangeFilter);
     return jobs.filter((j) => {
       if (q && !j.title.toLowerCase().includes(q) && !j.jobId.toLowerCase().includes(q)) return false;
       if (jobStatusFilter !== "all" && j.status !== jobStatusFilter) return false;
       if (jobCountryFilter !== "all" && !j.countries.includes(jobCountryFilter) && j.country !== jobCountryFilter) return false;
       if (jobTypeFilter !== "all" && j.jobType !== jobTypeFilter) return false;
-      if (jobPayRateFilter !== "all" && j.payRatePeriod !== jobPayRateFilter) return false;
-      if (parsedPayMin !== null && !isNaN(parsedPayMin) && j.payMax < parsedPayMin) return false;
-      if (parsedPayMax !== null && !isNaN(parsedPayMax) && j.payMin > parsedPayMax) return false;
+      if (rangeEntry) {
+        if (j.payMax < rangeEntry.min) return false;
+        if (rangeEntry.max !== null && j.payMin > rangeEntry.max) return false;
+      }
       if (jobSeniorityFilter !== "all" && j.seniority !== jobSeniorityFilter) return false;
       if (jobWorkplaceFilter !== "all" && j.workplace !== jobWorkplaceFilter) return false;
       return true;
     });
-  }, [jobs, jobSearch, jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobPayMinFilter, jobPayMaxFilter, jobSeniorityFilter, jobWorkplaceFilter]);
+  }, [jobs, jobSearch, jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRangeFilter, jobSeniorityFilter, jobWorkplaceFilter]);
 
   if (isEditingInDedicatedView) {
     return (
@@ -4412,7 +4422,7 @@ export function GlobalWorkforceAdminPanel({
     return <GlobalWorkforcePoliciesSection />;
   }
 
-  const activeFilterCount = [jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobSeniorityFilter, jobWorkplaceFilter].filter((f) => f !== "all").length + (jobPayMinFilter !== "" ? 1 : 0) + (jobPayMaxFilter !== "" ? 1 : 0);
+  const activeFilterCount = [jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRangeFilter, jobSeniorityFilter, jobWorkplaceFilter].filter((f) => f !== "all").length;
 
   return (
     <>
@@ -4451,7 +4461,7 @@ export function GlobalWorkforceAdminPanel({
               {activeFilterCount > 0 ? (
                 <button
                   type="button"
-                  onClick={() => { setJobSearch(""); setJobStatusFilter("all"); setJobCountryFilter("all"); setJobTypeFilter("all"); setJobPayRateFilter("all"); setJobPayMinFilter(""); setJobPayMaxFilter(""); setJobSeniorityFilter("all"); setJobWorkplaceFilter("all"); }}
+                  onClick={() => { setJobSearch(""); setJobStatusFilter("all"); setJobCountryFilter("all"); setJobTypeFilter("all"); setJobPayRangeFilter("all"); setJobSeniorityFilter("all"); setJobWorkplaceFilter("all"); }}
                   className="h-9 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-muted transition hover:bg-slate-100"
                 >
                   Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
@@ -4459,7 +4469,7 @@ export function GlobalWorkforceAdminPanel({
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
-              {([ ["Status", jobStatusFilter, setJobStatusFilter, [["all","All statuses"], ...globalWorkforceStatusOptions.map((s) => [s, s])]] , ["Country", jobCountryFilter, setJobCountryFilter, [["all","All countries"], ...jobCountryOptions.map((c) => [c, c])]] , ["Type", jobTypeFilter, setJobTypeFilter, [["all","All types"], ...globalWorkforceJobTypeOptions.map((t) => [t, t])]] , ["Seniority", jobSeniorityFilter, setJobSeniorityFilter, [["all","Any seniority"], ...globalWorkforceSeniorityOptions.map((s) => [s, s])]] , ["Workplace", jobWorkplaceFilter, setJobWorkplaceFilter, [["all","Any workplace"], ...globalWorkforceWorkplaceOptions.map((w) => [w, w])]] ] as [string, string, (v: string) => void, string[][]][]).map(([label, value, setter, opts]) => (
+              {([ ["Status", jobStatusFilter, setJobStatusFilter, [["all","All statuses"], ...globalWorkforceStatusOptions.map((s) => [s, s])]] , ["Country", jobCountryFilter, setJobCountryFilter, [["all","All countries"], ...jobCountryOptions.map((c) => [c, c])]] , ["Type", jobTypeFilter, setJobTypeFilter, [["all","All types"], ...globalWorkforceJobTypeOptions.map((t) => [t, t])]] , ["Pay range", jobPayRangeFilter, setJobPayRangeFilter, [["all","Any pay range"], ...jobPayRateRangeOptions.map((r) => [r.value, r.label])]] , ["Seniority", jobSeniorityFilter, setJobSeniorityFilter, [["all","Any seniority"], ...globalWorkforceSeniorityOptions.map((s) => [s, s])]] , ["Workplace", jobWorkplaceFilter, setJobWorkplaceFilter, [["all","Any workplace"], ...globalWorkforceWorkplaceOptions.map((w) => [w, w])]] ] as [string, string, (v: string) => void, string[][]][]).map(([label, value, setter, opts]) => (
                 <div key={label} className="flex items-center gap-1">
                   <select
                     value={value}
@@ -4470,41 +4480,6 @@ export function GlobalWorkforceAdminPanel({
                   </select>
                 </div>
               ))}
-              {/* Pay rate: period selector + optional min/max range */}
-              <div className="flex items-center gap-1">
-                <select
-                  value={jobPayRateFilter}
-                  onChange={(e) => { setJobPayRateFilter(e.target.value); if (e.target.value === "all") { setJobPayMinFilter(""); setJobPayMaxFilter(""); } }}
-                  className={["h-9 rounded-full border px-3 text-xs font-semibold outline-none transition", jobPayRateFilter !== "all" ? "border-primary/40 bg-primary/5 text-primary" : "border-slate-200 bg-white text-ink hover:border-slate-300"].join(" ")}
-                >
-                  <option value="all">Any rate</option>
-                  {globalWorkforcePayRateOptions.map((r) => (
-                    <option key={r} value={r}>Per {r.toLowerCase()}</option>
-                  ))}
-                </select>
-                {jobPayRateFilter !== "all" && (
-                  <>
-                    <span className="text-xs text-muted">$</span>
-                    <input
-                      type="number"
-                      min={0}
-                      placeholder="Min"
-                      value={jobPayMinFilter}
-                      onChange={(e) => setJobPayMinFilter(e.target.value)}
-                      className={["h-9 w-20 rounded-full border px-3 text-xs font-semibold outline-none transition", jobPayMinFilter !== "" ? "border-primary/40 bg-primary/5 text-primary" : "border-slate-200 bg-white text-ink hover:border-slate-300"].join(" ")}
-                    />
-                    <span className="text-xs text-muted">–</span>
-                    <input
-                      type="number"
-                      min={0}
-                      placeholder="Max"
-                      value={jobPayMaxFilter}
-                      onChange={(e) => setJobPayMaxFilter(e.target.value)}
-                      className={["h-9 w-20 rounded-full border px-3 text-xs font-semibold outline-none transition", jobPayMaxFilter !== "" ? "border-primary/40 bg-primary/5 text-primary" : "border-slate-200 bg-white text-ink hover:border-slate-300"].join(" ")}
-                    />
-                  </>
-                )}
-              </div>
             </div>
           </section>
         ) : null}
