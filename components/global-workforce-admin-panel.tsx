@@ -4236,6 +4236,26 @@ export function GlobalWorkforceAdminPanel({
     }
   }
 
+  const jobCountryOptions = useMemo(() =>
+    Array.from(new Set(
+      jobs.flatMap((j) => j.countries.length > 0 ? j.countries : j.country ? [j.country] : []).filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b)),
+  [jobs]);
+
+  const filteredJobs = useMemo(() => {
+    const q = jobSearch.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (q && !j.title.toLowerCase().includes(q) && !j.jobId.toLowerCase().includes(q)) return false;
+      if (jobStatusFilter !== "all" && j.status !== jobStatusFilter) return false;
+      if (jobCountryFilter !== "all" && !j.countries.includes(jobCountryFilter) && j.country !== jobCountryFilter) return false;
+      if (jobTypeFilter !== "all" && j.jobType !== jobTypeFilter) return false;
+      if (jobPayRateFilter !== "all" && j.payRatePeriod !== jobPayRateFilter) return false;
+      if (jobSeniorityFilter !== "all" && j.seniority !== jobSeniorityFilter) return false;
+      if (jobWorkplaceFilter !== "all" && j.workplace !== jobWorkplaceFilter) return false;
+      return true;
+    });
+  }, [jobs, jobSearch, jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobSeniorityFilter, jobWorkplaceFilter]);
+
   if (isEditingInDedicatedView) {
     return (
       <GlobalWorkforceJobEditor
@@ -4385,29 +4405,6 @@ export function GlobalWorkforceAdminPanel({
   if (activeSection === "policies") {
     return <GlobalWorkforcePoliciesSection />;
   }
-
-  const jobCountryOptions = useMemo(() =>
-    Array.from(new Set(
-      jobs.flatMap((j) => j.countries.length > 0 ? j.countries : j.country ? [j.country] : []).filter(Boolean)
-    )).sort((a, b) => a.localeCompare(b)),
-  [jobs]);
-
-  const filteredJobs = useMemo(() => {
-    const q = jobSearch.trim().toLowerCase();
-    return jobs.filter((j) => {
-      if (q && !j.title.toLowerCase().includes(q) && !j.jobId.toLowerCase().includes(q)) return false;
-      if (jobStatusFilter !== "all" && j.status !== jobStatusFilter) return false;
-      if (jobCountryFilter !== "all") {
-        const jobCountries = j.countries.length > 0 ? j.countries : j.country ? [j.country] : [];
-        if (!jobCountries.includes(jobCountryFilter)) return false;
-      }
-      if (jobTypeFilter !== "all" && j.jobType !== jobTypeFilter) return false;
-      if (jobPayRateFilter !== "all" && j.payRatePeriod !== jobPayRateFilter) return false;
-      if (jobSeniorityFilter !== "all" && j.seniority !== jobSeniorityFilter) return false;
-      if (jobWorkplaceFilter !== "all" && j.workplace !== jobWorkplaceFilter) return false;
-      return true;
-    });
-  }, [jobs, jobSearch, jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobSeniorityFilter, jobWorkplaceFilter]);
 
   const activeFilterCount = [jobStatusFilter, jobCountryFilter, jobTypeFilter, jobPayRateFilter, jobSeniorityFilter, jobWorkplaceFilter].filter((f) => f !== "all").length;
 
