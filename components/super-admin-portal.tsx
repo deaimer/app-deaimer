@@ -2624,31 +2624,33 @@ export function SuperAdminPortal({
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
           <div className="space-y-6">
             {activeView === "overview" ? (
-              <OverviewPanel
-                approvedClientCount={clientApprovals.length}
-                approvedAdminCount={adminApprovals.length}
-                superAdmins={superAdmins}
-                activeUserEmail={normalizeEmail(activeUser.email)}
-                reviewerName={activeUser.displayName?.split(" ")[0] || "Super admin"}
-                onOpenAdmins={() => {
-                  setActiveAccessTarget("admins");
-                  setActiveView("access");
-                }}
-                onOpenClients={() => {
-                  setActiveAccessTarget("clients");
-                  setActiveView("access");
-                }}
-                onOpenTeam={() => setActiveView("team")}
-                onAddSuperAdmin={handleAddSuperAdmin}
-                onRemoveSuperAdmin={handleRemoveSuperAdmin}
-                isSavingSuperAdmin={isSavingSuperAdmin}
-                removingSuperEmail={removingSuperEmail}
-              />
-              {superAdminError ? (
-                <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                  {superAdminError}
-                </div>
-              ) : null}
+              <>
+                <OverviewPanel
+                  approvedClientCount={clientApprovals.length}
+                  approvedAdminCount={adminApprovals.length}
+                  superAdmins={superAdmins}
+                  activeUserEmail={normalizeEmail(activeUser.email)}
+                  reviewerName={activeUser.displayName?.split(" ")[0] || "Super admin"}
+                  onOpenAdmins={() => {
+                    setActiveAccessTarget("admins");
+                    setActiveView("access");
+                  }}
+                  onOpenClients={() => {
+                    setActiveAccessTarget("clients");
+                    setActiveView("access");
+                  }}
+                  onOpenTeam={() => setActiveView("team")}
+                  onAddSuperAdmin={handleAddSuperAdmin}
+                  onRemoveSuperAdmin={handleRemoveSuperAdmin}
+                  isSavingSuperAdmin={isSavingSuperAdmin}
+                  removingSuperEmail={removingSuperEmail}
+                />
+                {superAdminError ? (
+                  <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                    {superAdminError}
+                  </div>
+                ) : null}
+              </>
             ) : activeView === "access" ? (
               <AccessPanel
                 target={activeAccessTarget}
