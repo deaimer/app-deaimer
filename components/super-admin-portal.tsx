@@ -9,11 +9,14 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
+import { normalizeEmail } from "@/lib/auth/access-control";
 import {
-  SUPER_ADMIN_EMAILS,
-  isSuperAdminEmail,
-  normalizeEmail,
-} from "@/lib/auth/access-control";
+  addSuperAdmin,
+  removeSuperAdmin,
+  subscribeSuperAdminStatus,
+  subscribeToSuperAdmins,
+  type SuperAccessRecord,
+} from "@/lib/firebase/super-access";
 import {
   type AdminApprovalInput,
   type AdminApprovalRecord,
@@ -357,18 +360,40 @@ function WorkspaceOpenCard({
 function OverviewPanel({
   approvedClientCount,
   approvedAdminCount,
+  superAdmins,
+  activeUserEmail,
   reviewerName,
   onOpenAdmins,
   onOpenClients,
   onOpenTeam,
+  onAddSuperAdmin,
+  onRemoveSuperAdmin,
+  isSavingSuperAdmin,
+  removingSuperEmail,
 }: {
   approvedClientCount: number;
   approvedAdminCount: number;
+  superAdmins: SuperAccessRecord[];
+  activeUserEmail: string;
   reviewerName: string;
   onOpenAdmins: () => void;
   onOpenClients: () => void;
   onOpenTeam: () => void;
+  onAddSuperAdmin: (email: string) => Promise<void>;
+  onRemoveSuperAdmin: (email: string) => Promise<void>;
+  isSavingSuperAdmin: boolean;
+  removingSuperEmail: string | null;
 }) {
+  const [newSuperEmail, setNewSuperEmail] = useState("");
+
+  async function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = newSuperEmail.trim();
+    if (!trimmed) return;
+    await onAddSuperAdmin(trimmed);
+    setNewSuperEmail("");
+  }
+
   const overviewCards = [
     {
       label: "Approved clients",
@@ -382,7 +407,7 @@ function OverviewPanel({
     },
     {
       label: "Super admins",
-      value: String(SUPER_ADMIN_EMAILS.length).padStart(2, "0"),
+      value: String(superAdmins.length).padStart(2, "0"),
       detail: "Protected Google accounts with access to the control panel.",
     },
     {
@@ -453,22 +478,48 @@ function OverviewPanel({
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primarySoft">
               Protected access
             </p>
-            <p className="mt-2 text-lg font-semibold text-ink">Approved super admin emails</p>
+            <p className="mt-2 text-lg font-semibold text-ink">Super admins</p>
           </div>
           <span className="rounded-full bg-panelStrong px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
             Live
           </span>
         </div>
-        <div className="mt-4 flex flex-wrap gap-3">
-          {SUPER_ADMIN_EMAILS.map((email) => (
-            <span
-              key={email}
-              className="rounded-full border border-slate-200 bg-panelStrong px-4 py-2 text-xs font-semibold text-ink"
-            >
-              {email}
-            </span>
+        <div className="mt-4 space-y-2">
+          {superAdmins.map((sa) => (
+            <div key={sa.email} className="flex items-center justify-between gap-3 rounded-[0.75rem] border border-slate-100 bg-panelStrong px-4 py-2.5">
+              <span className="text-xs font-semibold text-ink">{sa.email}</span>
+              {sa.email !== activeUserEmail ? (
+                <button
+                  type="button"
+                  onClick={() => void onRemoveSuperAdmin(sa.email)}
+                  disabled={removingSuperEmail === sa.email || isSavingSuperAdmin}
+                  className="rounded-full border border-rose-200 bg-white px-3 py-1 text-[11px] font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                >
+                  {removingSuperEmail === sa.email ? "Removing…" : "Remove"}
+                </button>
+              ) : (
+                <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold text-primary">You</span>
+              )}
+            </div>
           ))}
         </div>
+        <form onSubmit={(e) => void handleAdd(e)} className="mt-4 flex gap-2">
+          <input
+            type="email"
+            value={newSuperEmail}
+            onChange={(e) => setNewSuperEmail(e.target.value)}
+            placeholder="Add super admin email…"
+            disabled={isSavingSuperAdmin}
+            className="h-9 flex-1 rounded-full border border-slate-300 bg-white px-4 text-xs text-ink outline-none transition placeholder:text-muted/50 focus:border-primary disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={!newSuperEmail.trim() || isSavingSuperAdmin}
+            className="h-9 rounded-full bg-primary px-4 text-xs font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-50"
+          >
+            {isSavingSuperAdmin ? "Adding…" : "Add"}
+          </button>
+        </form>
       </section>
     </div>
   );
@@ -1885,6 +1936,12 @@ export function SuperAdminPortal({
   const [activeWorkforceSection, setActiveWorkforceSection] =
     useState<SuperWorkforceSection>(initialWorkforceSection);
   const [activeDCSection, setActiveDCSection] = useState<DCAdminSection>(initialDCSection);
+  const [isCurrentUserSuperAdmin, setIsCurrentUserSuperAdmin] = useState(false);
+  const [isSuperAdminLoaded, setIsSuperAdminLoaded] = useState(false);
+  const [superAdmins, setSuperAdmins] = useState<SuperAccessRecord[]>([]);
+  const [isSavingSuperAdmin, setIsSavingSuperAdmin] = useState(false);
+  const [removingSuperEmail, setRemovingSuperEmail] = useState<string | null>(null);
+  const [superAdminError, setSuperAdminError] = useState<string | null>(null);
   const [clientApprovals, setClientApprovals] = useState<ClientApprovalRecord[]>([]);
   const [adminApprovals, setAdminApprovals] = useState<AdminApprovalRecord[]>([]);
   const [isLoadingClientApprovals, setIsLoadingClientApprovals] = useState(false);
@@ -1982,13 +2039,6 @@ export function SuperAdminPortal({
       setAuthReady(true);
       setIsAuthResolving(false);
       setIsSigningIn(false);
-      if (!isSuperAdminEmail(existingUser.email)) {
-        setErrorMessage(
-          `Signed in as ${normalizeEmail(existingUser.email)}, but this account is not approved for super admin access. Allowed accounts: ${SUPER_ADMIN_EMAILS.join(", ")}`,
-        );
-      } else {
-        setErrorMessage(null);
-      }
     } else {
       setAuthReady(false);
       setIsAuthResolving(true);
@@ -2017,17 +2067,6 @@ export function SuperAdminPortal({
           return;
         }
 
-        if (user && !isSuperAdminEmail(user.email)) {
-          setActiveUser(user);
-          setAuthReady(true);
-          setIsAuthResolving(false);
-          setIsSigningIn(false);
-          setErrorMessage(
-            `Signed in as ${normalizeEmail(user.email)}, but this account is not approved for super admin access. Allowed accounts: ${SUPER_ADMIN_EMAILS.join(", ")}`,
-          );
-          return;
-        }
-
         setActiveUser(user);
         setAuthReady(true);
         setIsAuthResolving(false);
@@ -2047,8 +2086,38 @@ export function SuperAdminPortal({
     };
   }, [firebaseReady, hasMounted]);
 
+  // Subscribe to whether current user is a super admin (Firestore-based)
   useEffect(() => {
-    if (!hasMounted || !firebaseReady || !activeUser || !isSuperAdminEmail(activeUser.email)) {
+    if (!hasMounted || !firebaseReady || !activeUser?.email) {
+      setIsCurrentUserSuperAdmin(false);
+      setIsSuperAdminLoaded(false);
+      setSuperAdmins([]);
+      return;
+    }
+    setIsSuperAdminLoaded(false);
+    return subscribeSuperAdminStatus(
+      activeUser.email,
+      (isSuper) => {
+        setIsCurrentUserSuperAdmin(isSuper);
+        setIsSuperAdminLoaded(true);
+      },
+    );
+  }, [hasMounted, firebaseReady, activeUser?.email]);
+
+  // Load full super admin list (only when confirmed super admin)
+  useEffect(() => {
+    if (!isCurrentUserSuperAdmin) {
+      setSuperAdmins([]);
+      return;
+    }
+    return subscribeToSuperAdmins(
+      (records) => setSuperAdmins(records),
+      (error) => setSuperAdminError(error.message),
+    );
+  }, [isCurrentUserSuperAdmin]);
+
+  useEffect(() => {
+    if (!hasMounted || !firebaseReady || !activeUser || !isCurrentUserSuperAdmin) {
       setClientApprovals([]);
       return;
     }
@@ -2069,7 +2138,7 @@ export function SuperAdminPortal({
   }, [activeUser, firebaseReady, hasMounted]);
 
   useEffect(() => {
-    if (!hasMounted || !firebaseReady || !activeUser || !isSuperAdminEmail(activeUser.email)) {
+    if (!hasMounted || !firebaseReady || !activeUser || !isCurrentUserSuperAdmin) {
       setAdminApprovals([]);
       return;
     }
@@ -2369,6 +2438,33 @@ export function SuperAdminPortal({
     }
   }
 
+  async function handleAddSuperAdmin(email: string) {
+    if (!activeUser) return;
+    setSuperAdminError(null);
+    setIsSavingSuperAdmin(true);
+    try {
+      await addSuperAdmin(activeUser, email);
+    } catch (err) {
+      setSuperAdminError(err instanceof Error ? err.message : "Could not add super admin.");
+    } finally {
+      setIsSavingSuperAdmin(false);
+    }
+  }
+
+  async function handleRemoveSuperAdmin(email: string) {
+    if (!activeUser) return;
+    if (email === normalizeEmail(activeUser.email)) return;
+    setSuperAdminError(null);
+    setRemovingSuperEmail(email);
+    try {
+      await removeSuperAdmin(email);
+    } catch (err) {
+      setSuperAdminError(err instanceof Error ? err.message : "Could not remove super admin.");
+    } finally {
+      setRemovingSuperEmail(null);
+    }
+  }
+
   async function handleSignOut() {
     if (!firebaseReady) {
       return;
@@ -2391,7 +2487,7 @@ export function SuperAdminPortal({
     activeAccessTarget === "clients"
       ? isLoadingClientApprovals
       : isLoadingAdminApprovals;
-  if (!hasMounted || !authReady || isAuthResolving) {
+  if (!hasMounted || !authReady || isAuthResolving || (activeUser && !isSuperAdminLoaded)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-panelStrong">
         <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
@@ -2456,33 +2552,21 @@ export function SuperAdminPortal({
     );
   }
 
-  if (!isSuperAdminEmail(activeUser.email)) {
+  if (!isCurrentUserSuperAdmin) {
     return (
       <main className="min-h-screen bg-background text-ink">
         <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-4 py-10 sm:px-6 lg:px-10">
           <div className="grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
             <section className="rounded-[1.5rem] border border-slate-200 bg-white p-7 sm:p-10">
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted">
-                Signed in
+                Access denied
               </p>
               <h1 className="mt-5 max-w-3xl text-4xl font-semibold leading-tight text-ink sm:text-5xl">
                 This account cannot open `/super`
               </h1>
               <p className="mt-6 max-w-2xl text-base leading-8 text-muted">
-                You are still signed in as <span className="font-semibold text-ink">{normalizeEmail(activeUser.email)}</span>,
-                but only the approved super admin emails can open this workspace.
+                This workspace is restricted to approved super admin accounts. Contact a super admin to request access.
               </p>
-
-              <div className="mt-7 flex flex-wrap gap-3">
-                {SUPER_ADMIN_EMAILS.map((email) => (
-                  <span
-                    key={email}
-                    className="rounded-full border border-slate-300 bg-panelStrong px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-ink"
-                  >
-                    {email}
-                  </span>
-                ))}
-              </div>
             </section>
 
             <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6 sm:p-8">
@@ -2543,6 +2627,8 @@ export function SuperAdminPortal({
               <OverviewPanel
                 approvedClientCount={clientApprovals.length}
                 approvedAdminCount={adminApprovals.length}
+                superAdmins={superAdmins}
+                activeUserEmail={normalizeEmail(activeUser.email)}
                 reviewerName={activeUser.displayName?.split(" ")[0] || "Super admin"}
                 onOpenAdmins={() => {
                   setActiveAccessTarget("admins");
@@ -2553,7 +2639,16 @@ export function SuperAdminPortal({
                   setActiveView("access");
                 }}
                 onOpenTeam={() => setActiveView("team")}
+                onAddSuperAdmin={handleAddSuperAdmin}
+                onRemoveSuperAdmin={handleRemoveSuperAdmin}
+                isSavingSuperAdmin={isSavingSuperAdmin}
+                removingSuperEmail={removingSuperEmail}
               />
+              {superAdminError ? (
+                <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                  {superAdminError}
+                </div>
+              ) : null}
             ) : activeView === "access" ? (
               <AccessPanel
                 target={activeAccessTarget}

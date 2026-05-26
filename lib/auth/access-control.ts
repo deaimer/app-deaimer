@@ -1,6 +1,6 @@
 import type { PortalRole } from "@/lib/auth/portal-config";
 
-export const SUPER_ADMIN_EMAILS = [
+const BOOTSTRAP_SUPER_ADMIN_EMAILS = [
   "deaimerpvt@gmail.com",
   "ms.awan@deaimer.com",
 ] as const;
@@ -9,9 +9,10 @@ export function normalizeEmail(email: string | null | undefined) {
   return (email ?? "").trim().toLowerCase();
 }
 
+/** UX-only gate for non-portal components (ops-shell, admin-workspace, etc.).
+ *  Real access is enforced by Firestore rules via the superAccess collection. */
 export function isSuperAdminEmail(email: string | null | undefined) {
-  const normalizedEmail = normalizeEmail(email);
-  return SUPER_ADMIN_EMAILS.some((entry) => entry === normalizedEmail);
+  return BOOTSTRAP_SUPER_ADMIN_EMAILS.some((e) => e === normalizeEmail(email));
 }
 
 export function isRoleEmailLocked(role: PortalRole) {
@@ -20,10 +21,11 @@ export function isRoleEmailLocked(role: PortalRole) {
 
 export function isEmailAllowedForRole(
   role: PortalRole,
-  email: string | null | undefined,
+  _email: string | null | undefined,
 ) {
   if (role === "super") {
-    return isSuperAdminEmail(email);
+    // Enforced by Firestore rules via the superAccess collection — allow client-side
+    return true;
   }
 
   return true;
