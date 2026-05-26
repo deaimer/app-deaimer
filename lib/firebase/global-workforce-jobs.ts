@@ -591,10 +591,9 @@ export async function assignGlobalWorkforceJobAdmins(
   jobId: string,
   adminEmails: string[],
 ) {
-  await setDoc(
+  await updateDoc(
     buildJobPostRef(jobId),
     { assignedAdminEmails: adminEmails.filter(Boolean), updatedAt: serverTimestamp() },
-    { merge: true },
   );
 }
 

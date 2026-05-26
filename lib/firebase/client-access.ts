@@ -4,14 +4,13 @@ import {
   doc,
   DocumentData,
   onSnapshot,
-  orderBy,
-  query,
   serverTimestamp,
   setDoc,
   getDoc,
 } from "firebase/firestore";
 import { normalizeEmail } from "@/lib/auth/access-control";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
+import { requestSuperAccessApi } from "@/lib/firebase/super-access-api";
 
 export interface ClientApprovalInput {
   email: string;
@@ -42,7 +41,7 @@ function buildClientAccessRef(email: string) {
 function mapClientApproval(data: DocumentData, id: string): ClientApprovalRecord {
   return {
     id,
-    email: String(data.email ?? ""),
+    email: String(data.email ?? id),
     company: String(data.company ?? ""),
     contactName: String(data.contactName ?? ""),
     notes: String(data.notes ?? ""),
@@ -101,22 +100,19 @@ export function subscribeToClientApprovals(
   callback: (records: ClientApprovalRecord[]) => void,
   onError?: (error: Error) => void,
 ) {
-  const approvalsQuery = query(
-    getClientAccessCollection(),
-    orderBy("updatedAt", "desc"),
-  );
-
   return onSnapshot(
-    approvalsQuery,
+    getClientAccessCollection(),
     (snapshot) => {
       callback(
-        snapshot.docs.map((document) =>
-          mapClientApproval(document.data(), document.id),
-        ),
+        snapshot.docs
+          .map((document) => mapClientApproval(document.data(), document.id))
+          .sort((a, b) => a.email.localeCompare(b.email)),
       );
     },
     (error) => {
-      onError?.(error);
+      requestSuperAccessApi<{ clients: ClientApprovalRecord[] }>()
+        .then((payload) => callback(payload.clients))
+        .catch(() => onError?.(error));
     },
   );
 }

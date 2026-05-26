@@ -92,7 +92,7 @@ import {
 } from "@/components/data-collection-admin-panel";
 
 type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection";
-type AccessTarget = "clients" | "admins";
+type AccessTarget = "clients" | "admins" | "super";
 type AccessMode = "list" | "new" | "edit";
 type AdminDefaultsTab = "basics" | "services" | "role" | "pay" | "policies";
 type SuperWorkforceSection = "partners" | Extract<GlobalWorkforceAdminSection, "job-posts" | "candidates" | "signups" | "commissions" | "data">;
@@ -247,6 +247,20 @@ const accessPanelCopy: Record<AccessTarget, AccessPanelCopy> = {
     buttonLabel: "Approve admin",
     savingLabel: "Saving admin approval...",
     successLabel: "is now approved for the admin portal.",
+  },
+  super: {
+    addLabel: "Add super admin",
+    title: "Approve access",
+    description:
+      "Approve portal emails, manage saved access records, and keep client, admin, and super admin permissions tidy from one workspace.",
+    emailLabel: "Super admin email",
+    emailPlaceholder: "leader@deaimer.com",
+    listLabel: "Approved super admins",
+    listTitle: "Current super admin allowlist",
+    emptyLabel: "No super admins have been approved yet.",
+    buttonLabel: "Approve super admin",
+    savingLabel: "Saving super admin...",
+    successLabel: "is now approved for the super admin portal.",
   },
 };
 
@@ -534,6 +548,11 @@ interface AccessPanelProps {
   isLoading: boolean;
   message: string | null;
   error: string | null;
+  superAdmins: SuperAccessRecord[];
+  activeUserEmail: string;
+  superAdminError: string | null;
+  isSavingSuperAdmin: boolean;
+  removingSuperEmail: string | null;
   editingAdminEmail: string | null;
   deletingAdminEmail: string | null;
   onTargetChange: (target: AccessTarget) => void;
@@ -550,6 +569,8 @@ interface AccessPanelProps {
   onEditAdmin: (approval: AdminApprovalRecord) => void;
   onDeleteAdmin: (approval: AdminApprovalRecord) => void;
   onCancelAdminEdit: () => void;
+  onAddSuperAdmin: (email: string) => Promise<void>;
+  onRemoveSuperAdmin: (email: string) => Promise<void>;
 }
 
 function AccessPanel({
@@ -561,6 +582,11 @@ function AccessPanel({
   isLoading,
   message,
   error,
+  superAdmins,
+  activeUserEmail,
+  superAdminError,
+  isSavingSuperAdmin,
+  removingSuperEmail,
   editingAdminEmail,
   deletingAdminEmail,
   onTargetChange,
@@ -573,9 +599,14 @@ function AccessPanel({
   onEditAdmin,
   onDeleteAdmin,
   onCancelAdminEdit,
+  onAddSuperAdmin,
+  onRemoveSuperAdmin,
 }: AccessPanelProps) {
   const copy = accessPanelCopy[target];
   const isEditingAdmin = accessMode === "edit" && target === "admins" && Boolean(editingAdminEmail);
+  const isSuperTarget = target === "super";
+  const [newSuperEmail, setNewSuperEmail] = useState("");
+  const [superAccessMessage, setSuperAccessMessage] = useState<string | null>(null);
   const selectedDepartment = departmentOptions.find(
     (department) => department.name === draft.profileDefaults.identity.department,
   ) ?? departmentOptions[0];
@@ -620,7 +651,27 @@ function AccessPanel({
 
   useEffect(() => {
     setActiveAdminDefaultsTab("basics");
+    setNewSuperEmail("");
+    setSuperAccessMessage(null);
   }, [target, accessMode]);
+
+  async function handleSuperAdminSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedEmail = normalizeEmail(newSuperEmail);
+
+    if (!normalizedEmail) {
+      return;
+    }
+
+    await onAddSuperAdmin(normalizedEmail);
+    setSuperAccessMessage(`${normalizedEmail} is now approved for /super.`);
+    setNewSuperEmail("");
+  }
+
+  async function handleRemoveSuperAdmin(email: string) {
+    await onRemoveSuperAdmin(email);
+    setSuperAccessMessage(`${email} has been removed from /super.`);
+  }
 
   return (
     <div className="space-y-6">
@@ -630,7 +681,63 @@ function AccessPanel({
         description={copy.description}
       />
 
-      {accessMode === "new" || accessMode === "edit" ? (
+      {isSuperTarget && accessMode === "new" ? (
+        <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primarySoft">
+                {copy.addLabel}
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold text-ink">Create approval</h2>
+              <p className="mt-3 text-sm leading-7 text-muted">
+                Add a Google account to the Firestore super admin allowlist.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onAccessModeChange("list")}
+              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-panelStrong"
+            >
+              Back to list
+            </button>
+          </div>
+
+          {superAccessMessage ? (
+            <div className="mt-5 rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              {superAccessMessage}
+            </div>
+          ) : null}
+
+          {superAdminError ? (
+            <div className="mt-5 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+              {superAdminError}
+            </div>
+          ) : null}
+
+          <form onSubmit={(event) => void handleSuperAdminSubmit(event)} className="mt-5 space-y-4">
+            <label className="block">
+              <span className="mb-2 block text-sm text-muted">{copy.emailLabel}</span>
+              <input
+                type="email"
+                required
+                value={newSuperEmail}
+                onChange={(event) => setNewSuperEmail(event.target.value)}
+                placeholder={copy.emailPlaceholder}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={isSavingSuperAdmin}
+              className="inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSavingSuperAdmin ? copy.savingLabel : copy.buttonLabel}
+            </button>
+          </form>
+        </section>
+      ) : accessMode === "new" || accessMode === "edit" ? (
       <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -1048,7 +1155,7 @@ function AccessPanel({
       ) : (
         <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
           <div className="mb-5 inline-flex rounded-full border border-slate-200 bg-panelStrong p-1">
-            {(["clients", "admins"] as AccessTarget[]).map((item) => {
+            {(["clients", "admins", "super"] as AccessTarget[]).map((item) => {
               const isActive = item === target;
 
               return (
@@ -1066,7 +1173,7 @@ function AccessPanel({
                       : "text-muted hover:text-ink",
                   ].join(" ")}
                 >
-                  {item === "admins" ? "Admins" : "Clients"}
+                  {item === "admins" ? "Admins" : item === "super" ? "Super admins" : "Clients"}
                 </button>
               );
             })}
@@ -1087,27 +1194,91 @@ function AccessPanel({
                 onClick={onAddApproval}
                 className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white transition hover:bg-primaryStrong"
               >
-                {target === "admins" ? "Add admin" : "Add client"}
+                {target === "admins" ? "Add admin" : target === "super" ? "Add super admin" : "Add client"}
               </button>
               <span className="rounded-full border border-slate-300 bg-panelStrong px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-ink">
-                {approvals.length} total
+                {isSuperTarget ? superAdmins.length : approvals.length} total
               </span>
             </div>
           </div>
 
-          {isLoading ? (
+          {superAccessMessage && isSuperTarget ? (
+            <div className="mt-5 rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              {superAccessMessage}
+            </div>
+          ) : null}
+
+          {superAdminError && isSuperTarget ? (
+            <div className="mt-5 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+              {superAdminError}
+            </div>
+          ) : null}
+
+          {isLoading && !isSuperTarget ? (
             <div className="mt-5 rounded-[1rem] border border-slate-200 bg-panelStrong px-4 py-4 text-sm text-muted">
               Loading approved entries...
             </div>
           ) : null}
 
-          {!isLoading && approvals.length === 0 ? (
+          {!isLoading && !isSuperTarget && approvals.length === 0 ? (
             <div className="mt-5 rounded-[1rem] border border-slate-200 bg-panelStrong px-4 py-4 text-sm text-muted">
               {copy.emptyLabel}
             </div>
           ) : null}
 
-          {!isLoading && approvals.length > 0 ? (
+          {isSuperTarget && superAdmins.length === 0 ? (
+            <div className="mt-5 rounded-[1rem] border border-slate-200 bg-panelStrong px-4 py-4 text-sm text-muted">
+              {copy.emptyLabel}
+            </div>
+          ) : null}
+
+          {isSuperTarget && superAdmins.length > 0 ? (
+            <div className="mt-5 space-y-2">
+              {superAdmins.map((admin) => {
+                const normalizedEmail = normalizeEmail(admin.email);
+                const isCurrentUser = normalizedEmail === activeUserEmail;
+
+                return (
+                  <article
+                    key={normalizedEmail}
+                    className="rounded-xl border border-slate-200 bg-panelStrong px-3 py-2.5"
+                  >
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-ink">
+                            {normalizedEmail}
+                          </p>
+                          <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-900">
+                            super
+                          </span>
+                          {isCurrentUser ? (
+                            <span className="shrink-0 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                              you
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 truncate text-xs text-muted">
+                          Invited by {admin.invitedByEmail || "super admin"}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveSuperAdmin(normalizedEmail)}
+                        disabled={isCurrentUser || removingSuperEmail === normalizedEmail}
+                        className="shrink-0 rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-900 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {removingSuperEmail === normalizedEmail ? "Removing..." : "Remove"}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {!isLoading && !isSuperTarget && approvals.length > 0 ? (
             <div className="mt-5 space-y-2">
               {approvals.map((approval) => {
                 const isAdminApproval = target === "admins";
@@ -2387,6 +2558,10 @@ export function SuperAdminPortal({
   async function handleApprovalSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (activeAccessTarget === "super") {
+      return;
+    }
+
     if (!activeUser) {
       setErrorMessage("Sign in as a super admin before approving access.");
       return;
@@ -2451,9 +2626,25 @@ export function SuperAdminPortal({
     setSuperAdminError(null);
     setIsSavingSuperAdmin(true);
     try {
-      await addSuperAdmin(activeUser, email);
+      const normalizedEmail = normalizeEmail(email);
+      await addSuperAdmin(activeUser, normalizedEmail);
+      setSuperAdmins((current) => {
+        if (current.some((record) => normalizeEmail(record.email) === normalizedEmail)) {
+          return current;
+        }
+
+        return [
+          ...current,
+          {
+            email: normalizedEmail,
+            invitedByEmail: normalizeEmail(activeUser.email),
+            invitedByUid: activeUser.uid,
+          },
+        ].sort((a, b) => a.email.localeCompare(b.email));
+      });
     } catch (err) {
       setSuperAdminError(err instanceof Error ? err.message : "Could not add super admin.");
+      throw err;
     } finally {
       setIsSavingSuperAdmin(false);
     }
@@ -2466,8 +2657,12 @@ export function SuperAdminPortal({
     setRemovingSuperEmail(email);
     try {
       await removeSuperAdmin(email);
+      setSuperAdmins((current) =>
+        current.filter((record) => normalizeEmail(record.email) !== normalizeEmail(email)),
+      );
     } catch (err) {
       setSuperAdminError(err instanceof Error ? err.message : "Could not remove super admin.");
+      throw err;
     } finally {
       setRemovingSuperEmail(null);
     }
@@ -2487,14 +2682,22 @@ export function SuperAdminPortal({
   }
 
   const activeApprovals = useMemo<ApprovalRecordView[]>(
-    () => (activeAccessTarget === "clients" ? clientApprovals : adminApprovals),
+    () => {
+      if (activeAccessTarget === "super") {
+        return [];
+      }
+
+      return activeAccessTarget === "clients" ? clientApprovals : adminApprovals;
+    },
     [activeAccessTarget, adminApprovals, clientApprovals],
   );
 
   const activeApprovalsLoading =
-    activeAccessTarget === "clients"
-      ? isLoadingClientApprovals
-      : isLoadingAdminApprovals;
+    activeAccessTarget === "super"
+      ? false
+      : activeAccessTarget === "clients"
+        ? isLoadingClientApprovals
+        : isLoadingAdminApprovals;
   if (!hasMounted || !authReady || isAuthResolving || (activeUser && !isSuperAdminLoaded)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-panelStrong">
@@ -2669,6 +2872,11 @@ export function SuperAdminPortal({
                 isLoading={activeApprovalsLoading}
                 message={approvalMessage}
                 error={errorMessage}
+                superAdmins={superAdmins}
+                activeUserEmail={normalizeEmail(activeUser.email)}
+                superAdminError={superAdminError}
+                isSavingSuperAdmin={isSavingSuperAdmin}
+                removingSuperEmail={removingSuperEmail}
                 editingAdminEmail={editingAdminEmail}
                 deletingAdminEmail={deletingAdminEmail}
                 onTargetChange={handleAccessTargetChange}
@@ -2681,6 +2889,8 @@ export function SuperAdminPortal({
                 onEditAdmin={handleStartEditAdminApproval}
                 onDeleteAdmin={handleDeleteAdminApproval}
                 onCancelAdminEdit={handleCancelAdminEdit}
+                onAddSuperAdmin={handleAddSuperAdmin}
+                onRemoveSuperAdmin={handleRemoveSuperAdmin}
               />
             ) : activeView === "workforce" ? (
               activeWorkforceSection === "partners" ? (

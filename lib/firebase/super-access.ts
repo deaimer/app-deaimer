@@ -1,16 +1,12 @@
 import {
   collection,
-  deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
 import { isSuperAdminEmail, normalizeEmail } from "@/lib/auth/access-control";
+import { requestSuperAccessApi } from "@/lib/firebase/super-access-api";
 
 export interface SuperAccessRecord {
   email: string;
@@ -51,34 +47,40 @@ export function subscribeToSuperAdmins(
   callback: (records: SuperAccessRecord[]) => void,
   onError?: (error: Error) => void,
 ) {
-  const q = query(buildSuperAccessCollection(), orderBy("createdAt", "asc"));
   return onSnapshot(
-    q,
+    buildSuperAccessCollection(),
     (snapshot) => {
       callback(
-        snapshot.docs.map((d) => ({
-          email: String(d.data().email ?? ""),
-          invitedByEmail: String(d.data().invitedByEmail ?? ""),
-          invitedByUid: String(d.data().invitedByUid ?? ""),
-          createdAt: d.data().createdAt,
-        })),
+        snapshot.docs
+          .map((d) => ({
+            email: String(d.data().email ?? d.id),
+            invitedByEmail: String(d.data().invitedByEmail ?? ""),
+            invitedByUid: String(d.data().invitedByUid ?? ""),
+            createdAt: d.data().createdAt,
+          }))
+          .sort((a, b) => a.email.localeCompare(b.email)),
       );
     },
-    (error) => onError?.(error),
+    (error) => {
+      requestSuperAccessApi<{ superAdmins: SuperAccessRecord[] }>()
+        .then((payload) => callback(payload.superAdmins))
+        .catch(() => onError?.(error));
+    },
   );
 }
 
-export async function addSuperAdmin(inviter: User, targetEmail: string): Promise<void> {
+export async function addSuperAdmin(_inviter: User, targetEmail: string): Promise<void> {
   const normalized = normalizeEmail(targetEmail);
   if (!normalized) throw new Error("Invalid email address.");
-  await setDoc(buildSuperAccessRef(normalized), {
-    email: normalized,
-    invitedByEmail: inviter.email ?? "",
-    invitedByUid: inviter.uid,
-    createdAt: serverTimestamp(),
+  await requestSuperAccessApi({
+    method: "POST",
+    body: JSON.stringify({ email: normalized }),
   });
 }
 
 export async function removeSuperAdmin(email: string): Promise<void> {
-  await deleteDoc(buildSuperAccessRef(email));
+  await requestSuperAccessApi({
+    method: "DELETE",
+    body: JSON.stringify({ email: normalizeEmail(email) }),
+  });
 }

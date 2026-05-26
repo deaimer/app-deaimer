@@ -18,7 +18,10 @@ export default async function SuperAdminPage({
       ? resolvedSearchParams.view
       : "overview";
   const activeTarget =
-    resolvedSearchParams.target === "admins" ? "admins" : "clients";
+    resolvedSearchParams.target === "admins" ||
+    resolvedSearchParams.target === "super"
+      ? resolvedSearchParams.target
+      : "clients";
   const activeMode =
     resolvedSearchParams.mode === "new" || resolvedSearchParams.mode === "edit"
       ? resolvedSearchParams.mode

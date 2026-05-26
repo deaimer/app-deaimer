@@ -6,14 +6,13 @@ import {
   DocumentData,
   getDoc,
   onSnapshot,
-  orderBy,
-  query,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { normalizeEmail } from "@/lib/auth/access-control";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
+import { requestSuperAccessApi } from "@/lib/firebase/super-access-api";
 import { servicePages } from "@/lib/service-pages";
 
 export type AdminServicePermission = string;
@@ -195,7 +194,7 @@ function buildAdminAccessRef(email: string) {
 function mapAdminApproval(data: DocumentData, id: string): AdminApprovalRecord {
   return {
     id,
-    email: String(data.email ?? ""),
+    email: String(data.email ?? id),
     company: String(data.company ?? ""),
     contactName: String(data.contactName ?? ""),
     notes: String(data.notes ?? ""),
@@ -284,22 +283,19 @@ export function subscribeToAdminApprovals(
   callback: (records: AdminApprovalRecord[]) => void,
   onError?: (error: Error) => void,
 ) {
-  const approvalsQuery = query(
-    getAdminAccessCollection(),
-    orderBy("updatedAt", "desc"),
-  );
-
   return onSnapshot(
-    approvalsQuery,
+    getAdminAccessCollection(),
     (snapshot) => {
       callback(
-        snapshot.docs.map((document) =>
-          mapAdminApproval(document.data(), document.id),
-        ),
+        snapshot.docs
+          .map((document) => mapAdminApproval(document.data(), document.id))
+          .sort((a, b) => a.email.localeCompare(b.email)),
       );
     },
     (error) => {
-      onError?.(error);
+      requestSuperAccessApi<{ admins: AdminApprovalRecord[] }>()
+        .then((payload) => callback(payload.admins))
+        .catch(() => onError?.(error));
     },
   );
 }

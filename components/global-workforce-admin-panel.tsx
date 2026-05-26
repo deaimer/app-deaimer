@@ -733,7 +733,7 @@ function JobRow({
     setLocalEmails(next);
     setIsSavingAssign(true);
     try {
-      await onAssignAdmins?.(job.jobId, next);
+      await onAssignAdmins?.(job.id, next);
     } finally {
       setIsSavingAssign(false);
     }
