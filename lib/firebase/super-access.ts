@@ -1,5 +1,4 @@
 import {
-  collection,
   doc,
   onSnapshot,
 } from "firebase/firestore";
@@ -13,11 +12,6 @@ export interface SuperAccessRecord {
   invitedByEmail: string;
   invitedByUid: string;
   createdAt?: unknown;
-}
-
-function buildSuperAccessCollection() {
-  const { firestore } = getFirebaseClientServices();
-  return collection(firestore, "superAccess");
 }
 
 function buildSuperAccessRef(email: string) {
@@ -47,26 +41,11 @@ export function subscribeToSuperAdmins(
   callback: (records: SuperAccessRecord[]) => void,
   onError?: (error: Error) => void,
 ) {
-  return onSnapshot(
-    buildSuperAccessCollection(),
-    (snapshot) => {
-      callback(
-        snapshot.docs
-          .map((d) => ({
-            email: String(d.data().email ?? d.id),
-            invitedByEmail: String(d.data().invitedByEmail ?? ""),
-            invitedByUid: String(d.data().invitedByUid ?? ""),
-            createdAt: d.data().createdAt,
-          }))
-          .sort((a, b) => a.email.localeCompare(b.email)),
-      );
-    },
-    (error) => {
-      requestSuperAccessApi<{ superAdmins: SuperAccessRecord[] }>()
-        .then((payload) => callback(payload.superAdmins))
-        .catch(() => onError?.(error));
-    },
-  );
+  void requestSuperAccessApi<{ superAdmins: SuperAccessRecord[] }>()
+    .then((payload) => callback(payload.superAdmins))
+    .catch((error) => onError?.(error));
+
+  return () => undefined;
 }
 
 export async function addSuperAdmin(_inviter: User, targetEmail: string): Promise<void> {

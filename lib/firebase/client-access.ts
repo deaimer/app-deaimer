@@ -1,9 +1,7 @@
 import type { User } from "firebase/auth";
 import {
-  collection,
   doc,
   DocumentData,
-  onSnapshot,
   serverTimestamp,
   setDoc,
   getDoc,
@@ -26,11 +24,6 @@ export interface ClientApprovalRecord extends ClientApprovalInput {
   invitedByUid: string;
   createdAt?: unknown;
   updatedAt?: unknown;
-}
-
-function getClientAccessCollection() {
-  const { firestore } = getFirebaseClientServices();
-  return collection(firestore, "clientAccess");
 }
 
 function buildClientAccessRef(email: string) {
@@ -100,19 +93,9 @@ export function subscribeToClientApprovals(
   callback: (records: ClientApprovalRecord[]) => void,
   onError?: (error: Error) => void,
 ) {
-  return onSnapshot(
-    getClientAccessCollection(),
-    (snapshot) => {
-      callback(
-        snapshot.docs
-          .map((document) => mapClientApproval(document.data(), document.id))
-          .sort((a, b) => a.email.localeCompare(b.email)),
-      );
-    },
-    (error) => {
-      requestSuperAccessApi<{ clients: ClientApprovalRecord[] }>()
-        .then((payload) => callback(payload.clients))
-        .catch(() => onError?.(error));
-    },
-  );
+  void requestSuperAccessApi<{ clients: ClientApprovalRecord[] }>()
+    .then((payload) => callback(payload.clients))
+    .catch((error) => onError?.(error));
+
+  return () => undefined;
 }

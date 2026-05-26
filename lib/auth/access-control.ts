@@ -3,6 +3,8 @@ import type { PortalRole } from "@/lib/auth/portal-config";
 const BOOTSTRAP_SUPER_ADMIN_EMAILS = [
   "deaimerpvt@gmail.com",
   "ms.awan@deaimer.com",
+  "jannatawan12390@gmail.com",
+  "shehryarsta460@gmail.com",
 ] as const;
 
 export function normalizeEmail(email: string | null | undefined) {

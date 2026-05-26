@@ -2314,7 +2314,7 @@ export function SuperAdminPortal({
     );
 
     return unsubscribe;
-  }, [activeUser, firebaseReady, hasMounted]);
+  }, [activeUser, firebaseReady, hasMounted, isCurrentUserSuperAdmin]);
 
   useEffect(() => {
     if (!hasMounted || !firebaseReady || !activeUser || !isCurrentUserSuperAdmin) {
@@ -2335,7 +2335,7 @@ export function SuperAdminPortal({
     );
 
     return unsubscribe;
-  }, [activeUser, firebaseReady, hasMounted]);
+  }, [activeUser, firebaseReady, hasMounted, isCurrentUserSuperAdmin]);
 
 
   useEffect(() => {
@@ -2481,6 +2481,11 @@ export function SuperAdminPortal({
         handleCancelAdminEdit();
       }
 
+      setAdminApprovals((current) =>
+        current.filter(
+          (record) => normalizeEmail(record.email) !== normalizeEmail(approval.email),
+        ),
+      );
       setApprovalMessage(`${approval.email} has been removed from the admin portal.`);
     } catch (error) {
       setErrorMessage(
@@ -2574,6 +2579,22 @@ export function SuperAdminPortal({
     try {
       if (activeAccessTarget === "clients") {
         await saveClientApproval(activeUser, approvalDraft);
+        const normalizedApprovalEmail = normalizeEmail(approvalDraft.email);
+        setClientApprovals((current) => [
+          ...current.filter(
+            (approval) => normalizeEmail(approval.email) !== normalizedApprovalEmail,
+          ),
+          {
+            id: normalizedApprovalEmail,
+            email: normalizedApprovalEmail,
+            company: approvalDraft.company.trim(),
+            contactName: approvalDraft.contactName.trim(),
+            notes: approvalDraft.notes.trim(),
+            status: "approved" as const,
+            invitedByEmail: normalizeEmail(activeUser.email),
+            invitedByUid: activeUser.uid,
+          },
+        ].sort((a, b) => a.email.localeCompare(b.email)));
       } else {
         const currentEmployeeId = approvalDraft.profileDefaults.identity.employeeId;
         const duplicateEmployeeId = adminApprovals.some(
@@ -2600,6 +2621,28 @@ export function SuperAdminPortal({
         };
 
         await saveAdminApproval(activeUser, adminApprovalInput);
+        const normalizedApprovalEmail = normalizeEmail(approvalDraft.email);
+        setAdminApprovals((current) => [
+          ...current.filter(
+            (approval) => normalizeEmail(approval.email) !== normalizedApprovalEmail,
+          ),
+          {
+            id: normalizedApprovalEmail,
+            email: normalizedApprovalEmail,
+            company: adminApprovalInput.company.trim(),
+            contactName: adminApprovalInput.contactName.trim(),
+            notes: adminApprovalInput.notes.trim(),
+            servicePermissions: adminApprovalInput.servicePermissions,
+            profileDefaults: adminApprovalInput.profileDefaults,
+            status: "approved" as const,
+            invitedByEmail: normalizeEmail(activeUser.email),
+            invitedByUid: activeUser.uid,
+            assignedProjectIds:
+              adminApprovals.find(
+                (approval) => normalizeEmail(approval.email) === normalizedApprovalEmail,
+              )?.assignedProjectIds ?? [],
+          },
+        ].sort((a, b) => a.email.localeCompare(b.email)));
       }
 
       setApprovalMessage(

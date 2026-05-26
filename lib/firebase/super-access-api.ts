@@ -1,6 +1,7 @@
 import { getFirebaseClientServices } from "@/lib/firebase/client";
 
-export async function requestSuperAccessApi<T>(
+export async function requestSuperApi<T>(
+  path: string,
   init?: RequestInit,
 ): Promise<T> {
   const { auth } = getFirebaseClientServices();
@@ -10,7 +11,7 @@ export async function requestSuperAccessApi<T>(
     throw new Error("Sign in as a super admin first.");
   }
 
-  const response = await fetch("/api/super/access", {
+  const response = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -30,4 +31,8 @@ export async function requestSuperAccessApi<T>(
   }
 
   return payload as T;
+}
+
+export function requestSuperAccessApi<T>(init?: RequestInit): Promise<T> {
+  return requestSuperApi<T>("/api/super/access", init);
 }

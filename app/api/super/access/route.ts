@@ -5,6 +5,8 @@ import { adminAuth, adminFirestore } from "@/lib/firebase/admin";
 const BOOTSTRAP_SUPER_ADMIN_EMAILS = new Set([
   "deaimerpvt@gmail.com",
   "ms.awan@deaimer.com",
+  "jannatawan12390@gmail.com",
+  "shehryarsta460@gmail.com",
 ]);
 
 function normalizeEmail(email: unknown) {

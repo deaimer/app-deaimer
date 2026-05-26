@@ -15,6 +15,7 @@ import {
   where,
 } from "firebase/firestore";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
+import { requestSuperApi } from "@/lib/firebase/super-access-api";
 
 export const globalWorkforceJobTypeOptions = [
   "Contract",
@@ -591,10 +592,13 @@ export async function assignGlobalWorkforceJobAdmins(
   jobId: string,
   adminEmails: string[],
 ) {
-  await updateDoc(
-    buildJobPostRef(jobId),
-    { assignedAdminEmails: adminEmails.filter(Boolean), updatedAt: serverTimestamp() },
-  );
+  await requestSuperApi("/api/super/job-assignment", {
+    method: "POST",
+    body: JSON.stringify({
+      jobId,
+      adminEmails: adminEmails.filter(Boolean),
+    }),
+  });
 }
 
 export async function replaceGlobalWorkforceJobReferenceLinks(

@@ -1,6 +1,5 @@
 import type { User } from "firebase/auth";
 import {
-  collection,
   deleteDoc,
   doc,
   DocumentData,
@@ -181,11 +180,6 @@ function normalizeServicePermissions(
   );
 }
 
-function getAdminAccessCollection() {
-  const { firestore } = getFirebaseClientServices();
-  return collection(firestore, "adminAccess");
-}
-
 function buildAdminAccessRef(email: string) {
   const { firestore } = getFirebaseClientServices();
   return doc(firestore, "adminAccess", normalizeEmail(email));
@@ -283,21 +277,11 @@ export function subscribeToAdminApprovals(
   callback: (records: AdminApprovalRecord[]) => void,
   onError?: (error: Error) => void,
 ) {
-  return onSnapshot(
-    getAdminAccessCollection(),
-    (snapshot) => {
-      callback(
-        snapshot.docs
-          .map((document) => mapAdminApproval(document.data(), document.id))
-          .sort((a, b) => a.email.localeCompare(b.email)),
-      );
-    },
-    (error) => {
-      requestSuperAccessApi<{ admins: AdminApprovalRecord[] }>()
-        .then((payload) => callback(payload.admins))
-        .catch(() => onError?.(error));
-    },
-  );
+  void requestSuperAccessApi<{ admins: AdminApprovalRecord[] }>()
+    .then((payload) => callback(payload.admins))
+    .catch((error) => onError?.(error));
+
+  return () => undefined;
 }
 
 export function subscribeToAdminApproval(
