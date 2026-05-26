@@ -2100,6 +2100,14 @@ export function SuperAdminPortal({
       (isSuper) => {
         setIsCurrentUserSuperAdmin(isSuper);
         setIsSuperAdminLoaded(true);
+        if (isSuper) {
+          setErrorMessage(null);
+        }
+      },
+      (error) => {
+        setErrorMessage(
+          `Could not verify super admin access for ${normalizeEmail(activeUser.email)}: ${error.message}`,
+        );
       },
     );
   }, [hasMounted, firebaseReady, activeUser?.email]);

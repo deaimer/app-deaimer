@@ -10,7 +10,7 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
-import { normalizeEmail } from "@/lib/auth/access-control";
+import { isSuperAdminEmail, normalizeEmail } from "@/lib/auth/access-control";
 
 export interface SuperAccessRecord {
   email: string;
@@ -34,13 +34,14 @@ export function subscribeSuperAdminStatus(
   callback: (isSuperAdmin: boolean) => void,
   onError?: (error: Error) => void,
 ) {
-  const ref = buildSuperAccessRef(email);
+  const normalizedEmail = normalizeEmail(email);
+  const hasBootstrapAccess = isSuperAdminEmail(normalizedEmail);
+  const ref = buildSuperAccessRef(normalizedEmail);
   return onSnapshot(
     ref,
-    (snap) => callback(snap.exists()),
+    (snap) => callback(snap.exists() || hasBootstrapAccess),
     (error) => {
-      // permission-denied = not a super admin
-      callback(false);
+      callback(hasBootstrapAccess);
       onError?.(error);
     },
   );
