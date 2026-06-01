@@ -12,6 +12,7 @@ import {
   subscribeToDCSessions,
   subscribeToDCSpeakers,
   updateDCProject,
+  updateDCSessionAssignment,
   updateDCSessionQA,
   updateDCSessionTranscription,
   updateDCSpeakerStatus,
@@ -23,10 +24,18 @@ import {
   type DCTranscriptionStatus,
 } from "@/lib/firebase/data-collection";
 import {
+  subscribeToAdminApproval,
   subscribeToAdminApprovals,
   updateAdminProjectAssignment,
   type AdminApprovalRecord,
 } from "@/lib/firebase/admin-access";
+import {
+  addWorkerToProject,
+  removeWorkerFromProject,
+  subscribeToOpsWorkersByProject,
+  type OpsRole,
+  type OpsWorker,
+} from "@/lib/firebase/ops-data";
 
 export type DCAdminSection =
   | "projects"
@@ -186,13 +195,25 @@ function formatDate(val: unknown): string {
 
 function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const router = useRouter();
-  const [projects, setProjects] = useState<DCProject[]>([]);
+  const [allProjects, setAllProjects] = useState<DCProject[]>([]);
+  const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedProject, setSelectedProject] = useState<DCProject | null>(null);
 
   useEffect(() => {
-    return subscribeToDCProjects((p) => { setProjects(p); setLoading(false); });
+    return subscribeToDCProjects((p) => { setAllProjects(p); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    if (isSuperAdmin) return;
+    return subscribeToAdminApproval(activeUser.email, (approval) => {
+      setAdminProjectIds(approval?.assignedProjectIds ?? []);
+    });
+  }, [isSuperAdmin, activeUser.email]);
+
+  const projects = isSuperAdmin
+    ? allProjects
+    : allProjects.filter((p) => (adminProjectIds ?? []).includes(p.id));
 
   async function handleStatusChange(project: DCProject, status: DCProject["status"]) {
     await updateDCProject(project.id, { status });
@@ -355,6 +376,13 @@ function ProjectDetail({
   const [assignAdminEmail, setAssignAdminEmail] = useState("");
   const [assigningAdmin, setAssigningAdmin] = useState(false);
   const [assignAdminError, setAssignAdminError] = useState("");
+  const [workers, setWorkers] = useState<OpsWorker[]>([]);
+  const [showAddWorker, setShowAddWorker] = useState(false);
+  const [workerEmail, setWorkerEmail] = useState("");
+  const [workerName, setWorkerName] = useState("");
+  const [workerRoles, setWorkerRoles] = useState<OpsRole[]>(["transcription"]);
+  const [addingWorker, setAddingWorker] = useState(false);
+  const [addWorkerError, setAddWorkerError] = useState("");
 
   const isUtterance = project.recordingMode === "utterance";
   const totalExpectedPrompts = isUtterance
@@ -371,9 +399,42 @@ function ProjectDetail({
   useEffect(() => {
     const u1 = subscribeToDCAssignmentsByProject(project.id, setAssignments);
     const u2 = subscribeToDCSessions((s) => setSessions(s.filter((x) => x.projectId === project.id)));
-    const u3 = subscribeToAdminApprovals(setAdminApprovals);
-    return () => { u1(); u2(); u3(); };
+    const u4 = subscribeToOpsWorkersByProject(project.id, setWorkers);
+    return () => { u1(); u2(); u4(); };
   }, [project.id]);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    subscribeToAdminApprovals(setAdminApprovals);
+  }, [isSuperAdmin]);
+
+  // Auto-propagate QA/transcriptor assignments to re-submitted sessions that lost them
+  useEffect(() => {
+    if (sessions.length === 0) return;
+    sessions.forEach((s) => {
+      if ((s.submissionCount ?? 0) === 0) return;
+      if (s.assignedQAEmail && s.assignedTranscriptorEmail) return;
+      const original = sessions.find(
+        (o) =>
+          o.id !== s.id &&
+          o.taskId === s.taskId &&
+          o.promptIndex === s.promptIndex &&
+          o.qaStatus === "rejected" &&
+          (Boolean(o.assignedQAEmail) || Boolean(o.assignedTranscriptorEmail)),
+      );
+      if (!original) return;
+      const needsTranscriptor = !s.assignedTranscriptorEmail && Boolean(original.assignedTranscriptorEmail);
+      const needsQA = !s.assignedQAEmail && Boolean(original.assignedQAEmail);
+      if (needsTranscriptor || needsQA) {
+        void updateDCSessionAssignment(
+          s.id,
+          needsTranscriptor ? original.assignedTranscriptorEmail : undefined,
+          needsQA ? original.assignedQAEmail : undefined,
+        );
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions.map((s) => s.id).join(",")]);
 
   async function handleAssignAdmin() {
     if (!assignAdminEmail) return;
@@ -397,6 +458,36 @@ function ProjectDetail({
       admin.email,
       admin.assignedProjectIds.filter((id) => id !== project.id),
     );
+  }
+
+  async function handleAddWorker() {
+    if (!workerEmail.trim() || workerRoles.length === 0) return;
+    setAddingWorker(true);
+    setAddWorkerError("");
+    try {
+      await addWorkerToProject(
+        workerEmail.trim(),
+        workerName.trim(),
+        workerRoles,
+        project.id,
+        activeUser.email ?? "",
+        activeUser.uid,
+        isSuperAdmin ? "super" : "admin",
+        isSuperAdmin ? undefined : (activeUser.email ?? undefined),
+      );
+      setShowAddWorker(false);
+      setWorkerEmail("");
+      setWorkerName("");
+      setWorkerRoles(["transcription"]);
+    } catch (err) {
+      setAddWorkerError(err instanceof Error ? err.message : "Could not add worker.");
+    } finally {
+      setAddingWorker(false);
+    }
+  }
+
+  async function handleRemoveWorker(worker: OpsWorker) {
+    await removeWorkerFromProject(worker.email, project.id);
   }
 
   async function handleAssign(e: FormEvent) {
@@ -705,6 +796,110 @@ function ProjectDetail({
         </div>
       )}
 
+      {/* Workers section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-ink">Workers ({workers.length})</h3>
+          <button
+            type="button"
+            onClick={() => { setShowAddWorker(true); setWorkerEmail(""); setWorkerName(""); setWorkerRoles(["transcription"]); setAddWorkerError(""); }}
+            className="rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primaryStrong"
+          >
+            + Add Worker
+          </button>
+        </div>
+        {workers.length === 0 ? (
+          <EmptyState message="No transcriptors or QA workers assigned to this project yet." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Name", "Email", "Roles", "Status", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {workers.map((w) => (
+                  <tr key={w.email} className="group hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-medium text-ink">{w.name || "—"}</td>
+                    <td className="px-4 py-3 text-muted">{w.email}</td>
+                    <td className="px-4 py-3 text-muted capitalize">{w.roles.join(", ")}</td>
+                    <td className="px-4 py-3"><StatusBadge status={w.status} /></td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveWorker(w)}
+                        className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-700 opacity-0 group-hover:opacity-100 hover:bg-rose-50"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <SlidePanel title="Add Worker to Project" open={showAddWorker} onClose={() => setShowAddWorker(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              Add a transcriptor or QA specialist. They can sign in at <strong>/ops</strong> and will only see sessions assigned to them.
+            </p>
+            {addWorkerError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{addWorkerError}</div>
+            )}
+            <Field label="Email" required>
+              <input
+                type="email"
+                className={fieldCls}
+                placeholder="worker@example.com"
+                value={workerEmail}
+                onChange={(e) => setWorkerEmail(e.target.value)}
+              />
+            </Field>
+            <Field label="Name">
+              <input
+                className={fieldCls}
+                placeholder="Full name (optional)"
+                value={workerName}
+                onChange={(e) => setWorkerName(e.target.value)}
+              />
+            </Field>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-ink">Roles</p>
+              {(["transcription", "qa"] as OpsRole[]).map((role) => (
+                <label key={role} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 hover:border-primary/30 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={workerRoles.includes(role)}
+                    onChange={() => setWorkerRoles((prev) =>
+                      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
+                    )}
+                    className="accent-primary"
+                  />
+                  <span className="capitalize font-medium text-ink">{role}</span>
+                </label>
+              ))}
+            </div>
+            <button
+              type="button"
+              disabled={!workerEmail.trim() || workerRoles.length === 0 || addingWorker}
+              onClick={() => void handleAddWorker()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-50"
+            >
+              {addingWorker ? (
+                <>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Adding…
+                </>
+              ) : "Add Worker"}
+            </button>
+          </div>
+        </SlidePanel>
+      </div>
+
       <h3 className="font-semibold text-ink">Sessions ({sessions.length})</h3>
       {sessions.length === 0 ? (
         <EmptyState message="No sessions recorded yet." />
@@ -713,7 +908,7 @@ function ProjectDetail({
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Session ID", "Speaker", "Duration", "Transcription", "QA", "Date"].map((h) => (
+                {["Session ID", "Speaker", "Duration", "Transcription", "QA", "Transcriptor", "QA Worker", "Date"].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -726,6 +921,30 @@ function ProjectDetail({
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
                   <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
+                  <td className="px-2 py-3">
+                    <select
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-ink"
+                      value={s.assignedTranscriptorEmail}
+                      onChange={(e) => void updateDCSessionAssignment(s.id, e.target.value, undefined)}
+                    >
+                      <option value="">— unassigned —</option>
+                      {workers.filter((w) => w.roles.includes("transcription")).map((w) => (
+                        <option key={w.email} value={w.email}>{w.name || w.email}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-3">
+                    <select
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-ink"
+                      value={s.assignedQAEmail}
+                      onChange={(e) => void updateDCSessionAssignment(s.id, undefined, e.target.value)}
+                    >
+                      <option value="">— unassigned —</option>
+                      {workers.filter((w) => w.roles.includes("qa")).map((w) => (
+                        <option key={w.email} value={w.email}>{w.name || w.email}</option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
                 </tr>
               ))}

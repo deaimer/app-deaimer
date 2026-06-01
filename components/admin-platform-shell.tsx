@@ -102,9 +102,20 @@ function AdminPlatformShellContent() {
       return () => undefined;
     }
 
-    return subscribeToAdminApproval(activeUser.email, (record) => {
-      setAdminApproval(record);
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+
+    void activeUser.getIdToken().then(() => {
+      if (cancelled) return;
+      unsub = subscribeToAdminApproval(activeUser.email, (record) => {
+        setAdminApproval(record);
+      });
     });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [activeUser?.email]);
 
   useEffect(() => {

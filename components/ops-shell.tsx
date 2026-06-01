@@ -19,7 +19,8 @@ import { isSuperAdminEmail } from "@/lib/auth/access-control";
 import {
   subscribeToDCProjects,
   subscribeToDCSessions,
-  subscribeToDCSessionsByProjects,
+  subscribeToDCSessionsByQA,
+  subscribeToDCSessionsByTranscriptor,
   subscribeToDCSpeakers,
   updateDCSessionQA,
   updateDCSessionTranscription,
@@ -368,9 +369,15 @@ function QAWorkspace({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const isDecided = session.qaStatus === "approved" || session.qaStatus === "rejected";
+
   async function submit(status: DCQAStatus) {
     if (status === "approved" && !score) {
       setError("Set a score before approving.");
+      return;
+    }
+    if (status === "rejected" && !note.trim()) {
+      setError("A rejection reason is required — describe the issue so the speaker can fix it.");
       return;
     }
     setSaving(true);
@@ -393,8 +400,6 @@ function QAWorkspace({
     void markInReview();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const isDecided = session.qaStatus === "approved" || session.qaStatus === "rejected";
 
   return (
     <div className="space-y-5">
@@ -425,61 +430,62 @@ function QAWorkspace({
         <audio controls src={session.audioUrl} className="w-full rounded-xl" />
       </div>
 
-      <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-        Listen to the audio above and assess quality — clarity, noise level, correct prompt coverage. Approve to send to transcription, or reject with a note.
-      </div>
-
-      {!isDecided && (
-        <div className="rounded-[1.25rem] border border-slate-200 bg-white p-5 space-y-4">
-          <div>
-            <p className="mb-2 text-[13px] font-medium text-ink">Audio Quality Score (1–5)</p>
-            <div className="flex gap-2">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setScore(n)}
-                  className={`flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold transition ${score === n ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-muted hover:border-primary/40 hover:text-ink"}`}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <Field label="Notes" hint="Reason for rejection or quality observations.">
-            <textarea
-              rows={3}
-              className={inputCls + " resize-none"}
-              placeholder="Optional notes…"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </Field>
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-          <div className="flex gap-3">
-            <button type="button" disabled={saving} onClick={() => void submit("approved")} className={btnPrimary}>
-              {saving ? "Saving…" : "Approve ✓"}
-            </button>
-            <button type="button" disabled={saving} onClick={() => void submit("rejected")} className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-5 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-100 disabled:opacity-50 transition">
-              {saving ? "Saving…" : "Reject ✗"}
-            </button>
-          </div>
+      {session.qaStatus === "rejected" && session.qaNote && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          <p className="font-semibold">Rejection reason</p>
+          <p className="mt-0.5">{session.qaNote}</p>
         </div>
       )}
+
 
       {isDecided && (
-        <div className={`rounded-xl border px-4 py-3 text-sm font-medium ${session.qaStatus === "approved" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
-          This session has been {session.qaStatus}. Score: {session.qaScore ?? "—"}
-          {session.qaNote ? ` · ${session.qaNote}` : ""}
+        <div className="rounded-xl border border-slate-200 bg-panelStrong px-4 py-3 text-sm text-muted">
+          This session was <strong className="text-ink">{session.qaStatus}</strong> — you can change the decision below.
         </div>
       )}
+
+      <div className="rounded-[1.25rem] border border-slate-200 bg-white p-5 space-y-4">
+        <div>
+          <p className="mb-2 text-[13px] font-medium text-ink">Audio Quality Score (1–5)</p>
+          <div className="flex gap-2">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setScore(n)}
+                className={`flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold transition ${score === n ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-muted hover:border-primary/40 hover:text-ink"}`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Field label="Notes" hint="Required when rejecting — describe the issue clearly.">
+          <textarea
+            rows={3}
+            className={inputCls + " resize-none"}
+            placeholder="Rejection reason or quality observations…"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </Field>
+        {error && <p className="text-sm text-rose-600">{error}</p>}
+        <div className="flex gap-3">
+          <button type="button" disabled={saving} onClick={() => void submit("approved")} className={btnPrimary}>
+            {saving ? "Saving…" : "Approve ✓"}
+          </button>
+          <button type="button" disabled={saving} onClick={() => void submit("rejected")} className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-5 py-2.5 text-sm font-semibold text-rose-800 hover:bg-rose-100 disabled:opacity-50 transition">
+            {saving ? "Saving…" : "Reject ✗"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // ─── QA Section ───────────────────────────────────────────────────────────────
 
-type QAFilter = "all" | "pending" | "in-review" | "approved" | "rejected";
+type QAFilter = "all" | "to-review" | "approved" | "rejected";
 
 function QASection({
   sessions,
@@ -488,7 +494,7 @@ function QASection({
   sessions: DCSession[];
   workerEmail: string;
 }) {
-  const [filter, setFilter] = useState<QAFilter>("pending");
+  const [filter, setFilter] = useState<QAFilter>("to-review");
   const [selected, setSelected] = useState<DCSession | null>(null);
   const [search, setSearch] = useState("");
 
@@ -502,8 +508,7 @@ function QASection({
   const filtered = allWithAudio.filter((s) => {
     const matchFilter =
       filter === "all" ||
-      (filter === "pending" && s.qaStatus === "pending") ||
-      (filter === "in-review" && s.qaStatus === "in-review") ||
+      (filter === "to-review" && (s.qaStatus === "pending" || s.qaStatus === "in-review")) ||
       (filter === "approved" && s.qaStatus === "approved") ||
       (filter === "rejected" && s.qaStatus === "rejected");
     const q = search.toLowerCase();
@@ -511,17 +516,15 @@ function QASection({
     return matchFilter && matchSearch;
   });
 
+  const toReviewCount = allWithAudio.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
   const counts = {
-    pending: allWithAudio.filter((s) => s.qaStatus === "pending").length,
-    "in-review": allWithAudio.filter((s) => s.qaStatus === "in-review").length,
     approved: allWithAudio.filter((s) => s.qaStatus === "approved").length,
     rejected: allWithAudio.filter((s) => s.qaStatus === "rejected").length,
   };
 
   const FILTERS: { key: QAFilter; label: string }[] = [
     { key: "all", label: `All (${allWithAudio.length})` },
-    { key: "pending", label: `Pending (${counts.pending})` },
-    { key: "in-review", label: `In Review (${counts["in-review"]})` },
+    { key: "to-review", label: `To Review (${toReviewCount})` },
     { key: "approved", label: `Approved (${counts.approved})` },
     { key: "rejected", label: `Rejected (${counts.rejected})` },
   ];
@@ -558,7 +561,7 @@ function QASection({
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState message={filter === "pending" ? "No sessions pending QA." : "No sessions match this filter."} />
+        <EmptyState message={filter === "to-review" ? "No sessions to review." : "No sessions match this filter."} />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="min-w-full text-sm">
@@ -1060,21 +1063,56 @@ function OpsPortal({
     if (isSuperAdmin) {
       return subscribeToDCSessions(setSessions);
     }
-    if (!worker || worker.assignedProjectIds.length === 0) {
+    if (!worker) {
       setSessions([]);
       return;
     }
-    // Admin-invited workers: scope to intersection of worker projects AND admin's projects
-    const effectiveProjectIds = worker.invitedByRole === "admin" && adminProjectIds !== null
-      ? worker.assignedProjectIds.filter((id) => adminProjectIds.includes(id))
-      : worker.assignedProjectIds;
 
-    if (effectiveProjectIds.length === 0) {
+    const email = worker.email;
+    const hasTranscription = worker.roles.includes("transcription");
+    const hasQA = worker.roles.includes("qa");
+
+    if (!hasTranscription && !hasQA) {
       setSessions([]);
       return;
     }
-    return subscribeToDCSessionsByProjects(effectiveProjectIds, setSessions);
-  }, [isSuperAdmin, worker?.assignedProjectIds.join(","), adminProjectIds?.join(",")]);
+
+    if (hasTranscription && !hasQA) {
+      return subscribeToDCSessionsByTranscriptor(email, setSessions);
+    }
+
+    if (hasQA && !hasTranscription) {
+      return subscribeToDCSessionsByQA(email, setSessions);
+    }
+
+    // Both roles: merge both subscriptions, dedup by id
+    let tSessions: DCSession[] = [];
+    let qSessions: DCSession[] = [];
+
+    function merge() {
+      const map = new Map<string, DCSession>();
+      for (const s of [...tSessions, ...qSessions]) map.set(s.id, s);
+      setSessions(Array.from(map.values()));
+    }
+
+    const u1 = subscribeToDCSessionsByTranscriptor(email, (s) => { tSessions = s; merge(); });
+    const u2 = subscribeToDCSessionsByQA(email, (s) => { qSessions = s; merge(); });
+    return () => { u1(); u2(); };
+  }, [isSuperAdmin, worker?.email, worker?.roles.join(",")]);
+
+  // Auto-claim orphaned re-submissions: rejected sessions the worker was assigned to
+  // may have been re-recorded without inheriting the QA assignment.
+  useEffect(() => {
+    if (isSuperAdmin || !worker || !worker.roles.includes("qa")) return;
+    const { auth } = getFirebaseClientServices();
+    void auth.currentUser?.getIdToken().then((idToken) => {
+      if (!idToken) return;
+      void fetch("/api/ops/claim-resubmissions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+    });
+  }, [isSuperAdmin, worker?.email]);
 
   function navigateTo(s: OpsSection) {
     router.replace(`/ops?section=${s}`, { scroll: false });
@@ -1197,10 +1235,22 @@ function OpsShellContent({
     if (!user?.email) { setWorker(null); setWorkerLoading(false); return; }
     if (isSuperAdminEmail(user.email)) { setWorkerLoading(false); return; }
     setWorkerLoading(true);
-    return subscribeToOpsWorkerByEmail(user.email, (w) => {
-      setWorker(w);
-      setWorkerLoading(false);
+
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+
+    void user.getIdToken().then(() => {
+      if (cancelled) return;
+      unsub = subscribeToOpsWorkerByEmail(user.email!, (w) => {
+        setWorker(w);
+        setWorkerLoading(false);
+      });
     });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [user?.email]);
 
   async function handleGoogleSignIn() {

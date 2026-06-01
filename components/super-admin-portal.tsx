@@ -529,9 +529,14 @@ function OverviewPanel({
           <button
             type="submit"
             disabled={!newSuperEmail.trim() || isSavingSuperAdmin}
-            className="h-9 rounded-full bg-primary px-4 text-xs font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-50"
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-xs font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-50"
           >
-            {isSavingSuperAdmin ? "Adding…" : "Add"}
+            {isSavingSuperAdmin ? (
+              <>
+                <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Adding
+              </>
+            ) : "Add"}
           </button>
         </form>
       </section>

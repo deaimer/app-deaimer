@@ -181,6 +181,8 @@ export interface DCSession {
   qaNote: string;
   flags: string[];
   submissionCount: number;
+  assignedTranscriptorEmail: string;
+  assignedQAEmail: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -204,6 +206,8 @@ export interface DCSessionInput {
   dialect: string;
   region: string;
   submissionCount?: number;
+  assignedTranscriptorEmail?: string;
+  assignedQAEmail?: string;
 }
 
 // ─── Mappers ──────────────────────────────────────────────────────────────────
@@ -431,6 +435,8 @@ function mapSession(data: DocumentData, id: string): DCSession {
     qaNote: String(data.qaNote ?? ""),
     flags: Array.isArray(data.flags) ? data.flags.map(String) : [],
     submissionCount: Number(data.submissionCount ?? 0),
+    assignedTranscriptorEmail: String(data.assignedTranscriptorEmail ?? ""),
+    assignedQAEmail: String(data.assignedQAEmail ?? ""),
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -728,9 +734,10 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
   const base = `dc-audio/${input.projectId}/${input.speakerId}/${timestamp}`;
 
   const rateLabel = input.sampleRate >= 48000 ? "48k" : input.sampleRate >= 16000 ? "16k" : "8k";
-  const ext = input.mimeType.includes("mp4") ? "mp4" : input.mimeType.includes("wav") ? "wav" : "webm";
+  const normalizedMime = input.mimeType.split(";")[0].trim();
+  const ext = normalizedMime.includes("mp4") ? "mp4" : normalizedMime.includes("wav") ? "wav" : "webm";
   const filePath = `${base}_${rateLabel}.${ext}`;
-  const audioUrl = await presignAndUpload(idToken, filePath, input.audioBlob, input.mimeType);
+  const audioUrl = await presignAndUpload(idToken, filePath, input.audioBlob, normalizedMime);
 
   const docRef = await addDoc(collection(db(), "dcSessions"), {
     projectId: input.projectId,
@@ -759,6 +766,8 @@ export async function submitDCSession(input: DCSessionInput): Promise<string> {
     qaNote: "",
     flags: [],
     submissionCount: input.submissionCount ?? 0,
+    ...(input.assignedTranscriptorEmail ? { assignedTranscriptorEmail: input.assignedTranscriptorEmail } : {}),
+    ...(input.assignedQAEmail ? { assignedQAEmail: input.assignedQAEmail } : {}),
     createdAt: serverTimestamp(),
   });
 
@@ -859,6 +868,42 @@ export async function updateDCSessionTranscription(
     ...(wer != null ? { werScore: wer } : {}),
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function updateDCSessionAssignment(
+  sessionId: string,
+  transcriptorEmail?: string,
+  qaEmail?: string,
+): Promise<void> {
+  await updateDoc(doc(db(), "dcSessions", sessionId), {
+    ...(transcriptorEmail !== undefined ? { assignedTranscriptorEmail: transcriptorEmail } : {}),
+    ...(qaEmail !== undefined ? { assignedQAEmail: qaEmail } : {}),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export function subscribeToDCSessionsByTranscriptor(
+  email: string,
+  callback: (sessions: DCSession[]) => void,
+  onError?: (err: Error) => void,
+) {
+  const q = query(
+    collection(db(), "dcSessions"),
+    where("assignedTranscriptorEmail", "==", email.trim().toLowerCase()),
+  );
+  return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapSession(d.data(), d.id))), onError);
+}
+
+export function subscribeToDCSessionsByQA(
+  email: string,
+  callback: (sessions: DCSession[]) => void,
+  onError?: (err: Error) => void,
+) {
+  const q = query(
+    collection(db(), "dcSessions"),
+    where("assignedQAEmail", "==", email.trim().toLowerCase()),
+  );
+  return onSnapshot(q, (snap) => callback(snap.docs.map((d) => mapSession(d.data(), d.id))), onError);
 }
 
 // ─── Conversational rooms ─────────────────────────────────────────────────────
@@ -1070,6 +1115,8 @@ export async function submitConvSession(input: DCSessionInput): Promise<string> 
     qaNote: "",
     flags: [],
     submissionCount: input.submissionCount ?? 0,
+    ...(input.assignedTranscriptorEmail ? { assignedTranscriptorEmail: input.assignedTranscriptorEmail } : {}),
+    ...(input.assignedQAEmail ? { assignedQAEmail: input.assignedQAEmail } : {}),
     createdAt: serverTimestamp(),
   });
 

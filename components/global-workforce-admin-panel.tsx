@@ -1359,6 +1359,9 @@ function GlobalWorkforceJobViewPage({
         ]
       : []),
     ...(canManageJobs ? [{ label: "Created by", value: job.createdByEmail || "Not available" }] : []),
+    ...(canManageJobs
+      ? [{ label: "Assigned admins", value: job.assignedAdminEmails.length > 0 ? job.assignedAdminEmails.join(", ") : "None assigned" }]
+      : []),
   ];
 
   return (

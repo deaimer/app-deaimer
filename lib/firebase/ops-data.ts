@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -136,4 +137,72 @@ export function subscribeToOpsWorkersByAdminEmail(
     (snap) => callback(snap.docs.map((d) => mapWorker(d.data(), d.id))),
     onError,
   );
+}
+
+export function subscribeToOpsWorkersByProject(
+  projectId: string,
+  callback: (workers: OpsWorker[]) => void,
+  onError?: (err: Error) => void,
+) {
+  const q = query(
+    collection(db(), "opsWorkers"),
+    where("assignedProjectIds", "array-contains", projectId),
+  );
+  return onSnapshot(
+    q,
+    (snap) => callback(snap.docs.map((d) => mapWorker(d.data(), d.id))),
+    onError,
+  );
+}
+
+export async function addWorkerToProject(
+  email: string,
+  name: string,
+  roles: OpsRole[],
+  projectId: string,
+  inviterEmail: string,
+  inviterUid: string,
+  invitedByRole: OpsInvitedByRole,
+  invitedByAdminEmail?: string,
+): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  const ref = doc(db(), "opsWorkers", normalized);
+  const existing = await getDoc(ref);
+
+  if (existing.exists()) {
+    const existingRoles = (existing.data().roles ?? []) as OpsRole[];
+    const mergedRoles = Array.from(new Set([...existingRoles, ...roles])) as OpsRole[];
+    const existingProjects: string[] = existing.data().assignedProjectIds ?? [];
+    await updateDoc(ref, {
+      roles: mergedRoles,
+      assignedProjectIds: Array.from(new Set([...existingProjects, projectId])),
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(ref, {
+      email: normalized,
+      name: name.trim(),
+      roles,
+      assignedProjectIds: [projectId],
+      status: "active",
+      invitedByEmail: inviterEmail,
+      invitedByUid: inviterUid,
+      invitedByRole,
+      ...(invitedByAdminEmail ? { invitedByAdminEmail: invitedByAdminEmail.trim().toLowerCase() } : {}),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+}
+
+export async function removeWorkerFromProject(email: string, projectId: string): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  const ref = doc(db(), "opsWorkers", normalized);
+  const existing = await getDoc(ref);
+  if (!existing.exists()) return;
+  const currentProjects: string[] = existing.data().assignedProjectIds ?? [];
+  await updateDoc(ref, {
+    assignedProjectIds: currentProjects.filter((id) => id !== projectId),
+    updatedAt: serverTimestamp(),
+  });
 }
