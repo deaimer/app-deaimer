@@ -142,6 +142,35 @@ function formatDate(val: unknown): string {
   } catch { return "—"; }
 }
 
+function groupSessionsByProject(sessions: DCSession[]) {
+  const groups = new Map<string, DCSession[]>();
+  sessions.forEach((session) => {
+    const key = session.projectId || session.projectName || "unknown";
+    groups.set(key, [...(groups.get(key) ?? []), session]);
+  });
+  return Array.from(groups.entries()).map(([projectId, projectSessions]) => ({
+    projectId,
+    projectName: projectSessions[0]?.projectName || "Untitled project",
+    sessions: projectSessions,
+    participantCount: new Set(projectSessions.map((s) => s.speakerId || s.speakerName).filter(Boolean)).size,
+  }));
+}
+
+function groupSessionsByParticipant(sessions: DCSession[]) {
+  const groups = new Map<string, DCSession[]>();
+  sessions.forEach((session) => {
+    const key = session.speakerId || session.speakerName || "unknown";
+    groups.set(key, [...(groups.get(key) ?? []), session]);
+  });
+  return Array.from(groups.entries()).map(([speakerId, speakerSessions]) => ({
+    speakerId,
+    speakerName: speakerSessions[0]?.speakerName || speakerId,
+    sessions: speakerSessions,
+    duration: speakerSessions.reduce((sum, session) => sum + session.duration, 0),
+    lastDate: speakerSessions[0]?.createdAt,
+  }));
+}
+
 // ─── Transcription Workspace ──────────────────────────────────────────────────
 
 function TranscriptionWorkspace({
@@ -245,8 +274,10 @@ function TranscriptionSection({
   sessions: DCSession[];
   workerEmail: string;
 }) {
-  const [filter, setFilter] = useState<TranscriptionFilter>("pending");
+  const [filter, setFilter] = useState<TranscriptionFilter>("all");
   const [selected, setSelected] = useState<DCSession | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   if (selected) {
@@ -260,15 +291,30 @@ function TranscriptionSection({
   }
 
   const withAudio = sessions.filter((s) => Boolean(s.audioUrl) && s.qaStatus === "approved");
+  const matchesFilter = (s: DCSession) =>
+    filter === "all" ||
+    (filter === "pending" && s.transcriptionStatus === "pending") ||
+    (filter === "in-progress" && s.transcriptionStatus === "human-review") ||
+    (filter === "completed" && s.transcriptionStatus === "completed");
   const filtered = withAudio.filter((s) => {
-    const matchFilter =
-      filter === "all" ||
-      (filter === "pending" && s.transcriptionStatus === "pending") ||
-      (filter === "in-progress" && s.transcriptionStatus === "human-review") ||
-      (filter === "completed" && s.transcriptionStatus === "completed");
+    const matchFilter = matchesFilter(s);
     const q = search.toLowerCase();
-    const matchSearch = !q || s.speakerName.toLowerCase().includes(q) || s.projectName.toLowerCase().includes(q) || (s.promptText ?? "").toLowerCase().includes(q);
+    const matchSearch = !q || s.speakerName.toLowerCase().includes(q) || s.projectName.toLowerCase().includes(q);
     return matchFilter && matchSearch;
+  });
+  const projectGroups = groupSessionsByProject(withAudio);
+  const selectedProject = selectedProjectId
+    ? groupSessionsByProject(withAudio).find((project) => project.projectId === selectedProjectId)
+    : null;
+  const selectedProjectSessions = selectedProject?.sessions ?? [];
+  const participantGroups = groupSessionsByParticipant(selectedProjectSessions);
+  const selectedParticipant = selectedParticipantId
+    ? participantGroups.find((participant) => participant.speakerId === selectedParticipantId)
+    : null;
+  const selectedParticipantSessions = selectedParticipant?.sessions ?? [];
+  const filteredParticipantSessions = selectedParticipantSessions.filter((s) => {
+    const q = search.toLowerCase();
+    return matchesFilter(s) && (!q || (s.promptText ?? "").toLowerCase().includes(q));
   });
 
   const counts = {
@@ -278,11 +324,208 @@ function TranscriptionSection({
   };
 
   const FILTERS: { key: TranscriptionFilter; label: string }[] = [
-    { key: "all", label: `All (${withAudio.length})` },
-    { key: "pending", label: `Pending (${counts.pending})` },
-    { key: "in-progress", label: `In Progress (${counts["in-progress"]})` },
-    { key: "completed", label: `Completed (${counts.completed})` },
+    { key: "all", label: `All (${selectedParticipantSessions.length})` },
+    { key: "pending", label: `Pending (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "pending").length})` },
+    { key: "in-progress", label: `In Progress (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "human-review").length})` },
+    { key: "completed", label: `Completed (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "completed").length})` },
   ];
+
+  if (!selectedProject) {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">Transcription Queue</h2>
+            <p className="mt-0.5 text-sm text-muted">Choose a project to view its participants.</p>
+          </div>
+        </div>
+
+        {projectGroups.length === 0 ? (
+          <EmptyState message="No QA-approved sessions awaiting transcription." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Project", "Participants", "Pending", "In Progress", "Completed", "Sessions", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {projectGroups.map((project) => {
+                  const pendingForProject = project.sessions.filter((s) => s.transcriptionStatus === "pending").length;
+                  const inProgressForProject = project.sessions.filter((s) => s.transcriptionStatus === "human-review").length;
+                  const completedForProject = project.sessions.filter((s) => s.transcriptionStatus === "completed").length;
+                  return (
+                    <tr key={project.projectId} className="hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{project.projectName}</td>
+                      <td className="px-4 py-3 text-muted">{project.participantCount}</td>
+                      <td className="px-4 py-3 text-muted">{pendingForProject}</td>
+                      <td className="px-4 py-3 text-muted">{inProgressForProject}</td>
+                      <td className="px-4 py-3 text-muted">{completedForProject}</td>
+                      <td className="px-4 py-3 text-muted">{project.sessions.length}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProjectId(project.projectId)}
+                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        >
+                          Open →
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedProject && selectedParticipant) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold text-ink">{selectedParticipant.speakerName}</h2>
+          <p className="mt-0.5 text-sm text-muted">{selectedProject.projectName} transcription sessions.</p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+          className="text-sm font-medium text-muted hover:text-primary"
+        >
+          ← Back to participants
+        </button>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-2 flex-wrap">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${filter === f.key ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-muted hover:text-ink"}`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="w-48 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-primary"
+            placeholder="Search sessions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {filteredParticipantSessions.length === 0 ? (
+          <EmptyState message="No sessions match this filter." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Session", "Duration", "Rate", "Status", "Date", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredParticipantSessions.map((s) => (
+                  <tr key={s.id} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
+                    <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
+                    <td className="px-4 py-3 text-muted">{s.sampleRate / 1000}k</td>
+                    <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
+                    <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setSelected(s)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        {s.transcriptionStatus === "completed" ? "Review" : "Transcribe →"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-ink">{selectedProject.projectName}</h2>
+          <p className="mt-0.5 text-sm text-muted">Participants in this project.</p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+        className="text-sm font-medium text-muted hover:text-primary"
+      >
+        ← Back to projects
+      </button>
+
+      {participantGroups.length === 0 ? (
+        <EmptyState message="No participants in this project." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Participant", "Sessions", "Pending", "In Progress", "Completed", "Duration", "Last Date", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {participantGroups.map((participant) => {
+                const pendingForParticipant = participant.sessions.filter((s) => s.transcriptionStatus === "pending").length;
+                const inProgressForParticipant = participant.sessions.filter((s) => s.transcriptionStatus === "human-review").length;
+                const completedForParticipant = participant.sessions.filter((s) => s.transcriptionStatus === "completed").length;
+                const nextSession =
+                  participant.sessions.find((s) => s.transcriptionStatus === "pending") ??
+                  participant.sessions.find((s) => s.transcriptionStatus === "human-review") ??
+                  participant.sessions[0];
+                return (
+                  <tr key={participant.speakerId} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-medium text-ink">{participant.speakerName}</td>
+                    <td className="px-4 py-3 text-muted">{participant.sessions.length}</td>
+                    <td className="px-4 py-3 text-muted">{pendingForParticipant}</td>
+                    <td className="px-4 py-3 text-muted">{inProgressForParticipant}</td>
+                    <td className="px-4 py-3 text-muted">{completedForParticipant}</td>
+                    <td className="px-4 py-3 text-muted">{formatDuration(participant.duration)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Open →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -494,8 +737,10 @@ function QASection({
   sessions: DCSession[];
   workerEmail: string;
 }) {
-  const [filter, setFilter] = useState<QAFilter>("to-review");
+  const [filter, setFilter] = useState<QAFilter>("all");
   const [selected, setSelected] = useState<DCSession | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   if (selected) {
@@ -504,16 +749,31 @@ function QASection({
 
   const allWithAudio = sessions.filter((s) => Boolean(s.audioUrl));
   const qaable = allWithAudio.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
+  const matchesFilter = (s: DCSession) =>
+    filter === "all" ||
+    (filter === "to-review" && (s.qaStatus === "pending" || s.qaStatus === "in-review")) ||
+    (filter === "approved" && s.qaStatus === "approved") ||
+    (filter === "rejected" && s.qaStatus === "rejected");
 
   const filtered = allWithAudio.filter((s) => {
-    const matchFilter =
-      filter === "all" ||
-      (filter === "to-review" && (s.qaStatus === "pending" || s.qaStatus === "in-review")) ||
-      (filter === "approved" && s.qaStatus === "approved") ||
-      (filter === "rejected" && s.qaStatus === "rejected");
+    const matchFilter = matchesFilter(s);
     const q = search.toLowerCase();
-    const matchSearch = !q || s.speakerName.toLowerCase().includes(q) || s.projectName.toLowerCase().includes(q) || (s.promptText ?? "").toLowerCase().includes(q);
+    const matchSearch = !q || s.speakerName.toLowerCase().includes(q) || s.projectName.toLowerCase().includes(q);
     return matchFilter && matchSearch;
+  });
+  const projectGroups = groupSessionsByProject(allWithAudio);
+  const selectedProject = selectedProjectId
+    ? groupSessionsByProject(allWithAudio).find((project) => project.projectId === selectedProjectId)
+    : null;
+  const selectedProjectSessions = selectedProject?.sessions ?? [];
+  const participantGroups = groupSessionsByParticipant(selectedProjectSessions);
+  const selectedParticipant = selectedParticipantId
+    ? participantGroups.find((participant) => participant.speakerId === selectedParticipantId)
+    : null;
+  const selectedParticipantSessions = selectedParticipant?.sessions ?? [];
+  const filteredParticipantSessions = selectedParticipantSessions.filter((s) => {
+    const q = search.toLowerCase();
+    return matchesFilter(s) && (!q || (s.promptText ?? "").toLowerCase().includes(q));
   });
 
   const toReviewCount = allWithAudio.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
@@ -523,11 +783,218 @@ function QASection({
   };
 
   const FILTERS: { key: QAFilter; label: string }[] = [
-    { key: "all", label: `All (${allWithAudio.length})` },
-    { key: "to-review", label: `To Review (${toReviewCount})` },
-    { key: "approved", label: `Approved (${counts.approved})` },
-    { key: "rejected", label: `Rejected (${counts.rejected})` },
+    { key: "all", label: `All (${selectedParticipantSessions.length})` },
+    { key: "to-review", label: `To Review (${selectedParticipantSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length})` },
+    { key: "approved", label: `Approved (${selectedParticipantSessions.filter((s) => s.qaStatus === "approved").length})` },
+    { key: "rejected", label: `Rejected (${selectedParticipantSessions.filter((s) => s.qaStatus === "rejected").length})` },
   ];
+
+  if (!selectedProject) {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">QA Queue</h2>
+            <p className="mt-0.5 text-sm text-muted">
+              Choose a project to view participants.
+              {qaable.length > 0 && <span className="ml-2 font-medium text-primary">{qaable.length} pending review</span>}
+            </p>
+          </div>
+        </div>
+
+        {projectGroups.length === 0 ? (
+          <EmptyState message="No sessions to review." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Project", "Participants", "To Review", "Approved", "Rejected", "Sessions", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {projectGroups.map((project) => {
+                  const toReviewForProject = project.sessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+                  const approvedForProject = project.sessions.filter((s) => s.qaStatus === "approved").length;
+                  const rejectedForProject = project.sessions.filter((s) => s.qaStatus === "rejected").length;
+                  return (
+                    <tr key={project.projectId} className="hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{project.projectName}</td>
+                      <td className="px-4 py-3 text-muted">{project.participantCount}</td>
+                      <td className="px-4 py-3 text-muted">{toReviewForProject}</td>
+                      <td className="px-4 py-3 text-muted">{approvedForProject}</td>
+                      <td className="px-4 py-3 text-muted">{rejectedForProject}</td>
+                      <td className="px-4 py-3 text-muted">{project.sessions.length}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProjectId(project.projectId)}
+                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        >
+                          Open →
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedProject && selectedParticipant) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold text-ink">{selectedParticipant.speakerName}</h2>
+          <p className="mt-0.5 text-sm text-muted">{selectedProject.projectName} QA sessions.</p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+          className="text-sm font-medium text-muted hover:text-primary"
+        >
+          ← Back to participants
+        </button>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-2 flex-wrap">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${filter === f.key ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-muted hover:text-ink"}`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="w-48 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-primary"
+            placeholder="Search sessions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {filteredParticipantSessions.length === 0 ? (
+          <EmptyState message="No sessions match this filter." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Session", "Prompt", "Duration", "QA Status", "Score", "Date", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredParticipantSessions.map((s) => (
+                  <tr key={s.id} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
+                    <td className="max-w-[220px] px-4 py-3 text-muted">
+                      <span className="block truncate">{s.promptText ?? "—"}</span>
+                      {s.submissionCount > 0 && (
+                        <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                          Resubmission #{s.submissionCount}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
+                    <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
+                    <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "—"}</td>
+                    <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setSelected(s)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Review →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-ink">{selectedProject.projectName}</h2>
+          <p className="mt-0.5 text-sm text-muted">Participants in this project.</p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+        className="text-sm font-medium text-muted hover:text-primary"
+      >
+        ← Back to projects
+      </button>
+
+      {participantGroups.length === 0 ? (
+        <EmptyState message="No participants in this project." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Participant", "Sessions", "To Review", "Approved", "Rejected", "Duration", "Last Date", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {participantGroups.map((participant) => {
+                const toReviewForParticipant = participant.sessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+                const approvedForParticipant = participant.sessions.filter((s) => s.qaStatus === "approved").length;
+                const rejectedForParticipant = participant.sessions.filter((s) => s.qaStatus === "rejected").length;
+                const nextSession =
+                  participant.sessions.find((s) => s.qaStatus === "pending" || s.qaStatus === "in-review") ??
+                  participant.sessions[0];
+                return (
+                  <tr key={participant.speakerId} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-medium text-ink">{participant.speakerName}</td>
+                    <td className="px-4 py-3 text-muted">{participant.sessions.length}</td>
+                    <td className="px-4 py-3 text-muted">{toReviewForParticipant}</td>
+                    <td className="px-4 py-3 text-muted">{approvedForParticipant}</td>
+                    <td className="px-4 py-3 text-muted">{rejectedForParticipant}</td>
+                    <td className="px-4 py-3 text-muted">{formatDuration(participant.duration)}</td>
+                    <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Open →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-5">

@@ -14,7 +14,8 @@ export default async function SuperAdminPage({
     resolvedSearchParams.view === "workforce" ||
     resolvedSearchParams.view === "company" ||
     resolvedSearchParams.view === "careers" ||
-    resolvedSearchParams.view === "data-collection"
+    resolvedSearchParams.view === "data-collection" ||
+    resolvedSearchParams.view === "evaluation-transcription"
       ? resolvedSearchParams.view
       : "overview";
   const activeTarget =
@@ -39,12 +40,17 @@ export default async function SuperAdminPage({
   const activeDCSection: DCAdminSection =
     resolvedSearchParams.section === "projects" ||
     resolvedSearchParams.section === "speakers" ||
-    resolvedSearchParams.section === "sessions" ||
-    resolvedSearchParams.section === "transcription" ||
-    resolvedSearchParams.section === "qa-review" ||
-    resolvedSearchParams.section === "delivery"
+    resolvedSearchParams.section === "sessions"
       ? resolvedSearchParams.section
       : "projects";
+
+  const activeEvalSection =
+    resolvedSearchParams.section === "assignments" ||
+    resolvedSearchParams.section === "qa-review" ||
+    resolvedSearchParams.section === "transcription" ||
+    resolvedSearchParams.section === "delivery"
+      ? resolvedSearchParams.section
+      : "assignments";
 
   const superPlatformMenuItems: PlatformSideMenuItem[] = [
     {
@@ -129,30 +135,40 @@ export default async function SuperAdminPage({
       active: activeView === "data-collection" && activeDCSection === "sessions",
     },
     {
-      label: "Transcription",
-      href: "/super?view=data-collection&section=transcription",
-      active: activeView === "data-collection" && activeDCSection === "transcription",
+      label: "Evaluation & Transcription",
+      isSectionHeader: true,
+    },
+    {
+      label: "Assignments",
+      href: "/super?view=evaluation-transcription&section=assignments",
+      active: activeView === "evaluation-transcription" && activeEvalSection === "assignments",
     },
     {
       label: "QA Review",
-      href: "/super?view=data-collection&section=qa-review",
-      active: activeView === "data-collection" && activeDCSection === "qa-review",
+      href: "/super?view=evaluation-transcription&section=qa-review",
+      active: activeView === "evaluation-transcription" && activeEvalSection === "qa-review",
+    },
+    {
+      label: "Transcription",
+      href: "/super?view=evaluation-transcription&section=transcription",
+      active: activeView === "evaluation-transcription" && activeEvalSection === "transcription",
     },
     {
       label: "Delivery",
-      href: "/super?view=data-collection&section=delivery",
-      active: activeView === "data-collection" && activeDCSection === "delivery",
+      href: "/super?view=evaluation-transcription&section=delivery",
+      active: activeView === "evaluation-transcription" && activeEvalSection === "delivery",
     },
   ];
 
   return (
     <SuperAdminPortal
-      initialView={activeView as "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection"}
+      initialView={activeView as "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection" | "evaluation-transcription"}
       initialAccessTarget={activeTarget}
       initialAccessMode={activeMode}
       initialEditingEmail={activeEditingEmail}
       initialWorkforceSection={activeWorkforceSection}
       initialDCSection={activeDCSection}
+      initialEvalSection={activeEvalSection}
       platformSideMenuItems={superPlatformMenuItems}
     />
   );

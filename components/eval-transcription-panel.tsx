@@ -6,17 +6,18 @@ import {
   subscribeToDCProjects,
   type DCProject,
 } from "@/lib/firebase/data-collection";
+import { DataCollectionAdminPanel } from "@/components/data-collection-admin-panel";
 import { subscribeToAdminApproval, type AdminApprovalRecord } from "@/lib/firebase/admin-access";
 import {
   saveOpsWorker,
   subscribeToOpsWorkers,
-  subscribeToOpsWorkersByAdminEmail,
+  subscribeToOpsWorkersByProjects,
   updateOpsWorkerStatus,
   type OpsRole,
   type OpsWorker,
 } from "@/lib/firebase/ops-data";
 
-export type EvalTranscriptionSection = "transcription-workers" | "qa-workers";
+export type EvalTranscriptionSection = "assignments" | "qa-review" | "transcription" | "delivery";
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ function WorkersTable({
   adminApproval,
 }: {
   workers: OpsWorker[];
-  roleFilter: OpsRole;
+  roleFilter?: OpsRole;
   adminProjects: DCProject[];
   allProjects: DCProject[];
   activeUser: User;
@@ -117,6 +118,7 @@ function WorkersTable({
 
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [roles, setRoles] = useState<OpsRole[]>([]);
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -126,11 +128,12 @@ function WorkersTable({
     ? allProjects.filter((p) => adminApproval.assignedProjectIds.includes(p.id))
     : adminProjects;
 
-  const filtered = workers.filter((w) => w.roles.includes(roleFilter));
+  const adminProjectIdSet = new Set(assignableProjects.map((p) => p.id));
+  const filtered = roleFilter ? workers.filter((w) => w.roles.includes(roleFilter)) : workers;
 
   function openNew() {
     setEditTarget(null);
-    setEmail(""); setName(""); setProjectIds([]);
+    setEmail(""); setName(""); setRoles(roleFilter ? [roleFilter] : ["qa"]); setProjectIds([]);
     setFormError("");
     setShowPanel(true);
   }
@@ -138,6 +141,7 @@ function WorkersTable({
   function openEdit(w: OpsWorker) {
     setEditTarget(w);
     setEmail(w.email); setName(w.name);
+    setRoles(w.roles);
     // Only show projects this admin controls
     setProjectIds(w.assignedProjectIds.filter((id) =>
       assignableProjects.some((p) => p.id === id)
@@ -150,9 +154,15 @@ function WorkersTable({
     setProjectIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
+  function toggleRole(role: OpsRole) {
+    if (roleFilter) return;
+    setRoles((prev) => prev.includes(role) ? prev.filter((x) => x !== role) : [...prev, role]);
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim()) { setFormError("Email is required."); return; }
+    if (!roleFilter && roles.length === 0) { setFormError("Select at least one role."); return; }
     setSaving(true);
     setFormError("");
     try {
@@ -160,9 +170,10 @@ function WorkersTable({
       const existingWorker = editTarget ?? workers.find((w) => w.email === normalizedEmail);
 
       // Merge roles so a worker can hold both qa and transcription
-      const mergedRoles: OpsRole[] = existingWorker
-        ? Array.from(new Set([...existingWorker.roles, roleFilter]))
-        : [roleFilter];
+      const selectedRoles = roleFilter ? [roleFilter] : roles;
+      const mergedRoles: OpsRole[] = roleFilter && existingWorker
+        ? Array.from(new Set([...existingWorker.roles, ...selectedRoles]))
+        : selectedRoles;
 
       // Preserve project assignments managed by other admins
       const adminProjectIds = new Set(assignableProjects.map((p) => p.id));
@@ -194,7 +205,7 @@ function WorkersTable({
     await updateOpsWorkerStatus(w.email, w.status === "active" ? "paused" : "active");
   }
 
-  const roleLabel = roleFilter === "transcription" ? "Transcription" : "QA";
+  const roleLabel = roleFilter === "transcription" ? "Transcription" : roleFilter === "qa" ? "QA" : "Assignments";
 
   return (
     <div className="space-y-5">
@@ -202,7 +213,7 @@ function WorkersTable({
         <div>
           <h2 className="text-xl font-semibold text-ink">{roleLabel} Workers</h2>
           <p className="mt-1 text-sm text-muted">
-            Invite people to handle {roleLabel.toLowerCase()} tasks on your assigned projects.
+            Assign QA and transcription workers to your available projects.
             {assignableProjects.length === 0 && (
               <span className="ml-1 text-amber-700"> No projects assigned yet — contact a super admin.</span>
             )}
@@ -220,34 +231,46 @@ function WorkersTable({
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Name", "Email", "Projects", "Status", ""].map((h) => (
+                {["Name", "Email", "Roles", "Projects", "Status", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((w) => (
-                <tr key={w.email} className="group hover:bg-panelStrong/40">
-                  <td className="px-4 py-3 font-medium text-ink">{w.name || "—"}</td>
-                  <td className="px-4 py-3 text-muted">{w.email}</td>
-                  <td className="px-4 py-3 text-muted">
-                    {w.assignedProjectIds.length === 0
-                      ? "—"
-                      : w.assignedProjectIds
-                          .map((id) => allProjects.find((p) => p.id === id)?.name ?? id)
-                          .join(", ")}
-                  </td>
-                  <td className="px-4 py-3"><StatusBadge status={w.status} /></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
-                      <button type="button" onClick={() => openEdit(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">Edit</button>
-                      <button type="button" onClick={() => void toggleStatus(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:bg-slate-100">
-                        {w.status === "active" ? "Pause" : "Activate"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((w) => {
+                const visibleProjectIds = adminApproval
+                  ? w.assignedProjectIds.filter((id) => adminProjectIdSet.has(id))
+                  : w.assignedProjectIds;
+                return (
+                  <tr key={w.email} className="group hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-medium text-ink">{w.name || "—"}</td>
+                    <td className="px-4 py-3 text-muted">{w.email}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {w.roles.map((role) => (
+                          <StatusBadge key={role} status={role} />
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-muted">
+                      {visibleProjectIds.length === 0
+                        ? "—"
+                        : visibleProjectIds
+                            .map((id) => allProjects.find((p) => p.id === id)?.name ?? id)
+                            .join(", ")}
+                    </td>
+                    <td className="px-4 py-3"><StatusBadge status={w.status} /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
+                        <button type="button" onClick={() => openEdit(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">Edit</button>
+                        <button type="button" onClick={() => void toggleStatus(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:bg-slate-100">
+                          {w.status === "active" ? "Pause" : "Activate"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -277,11 +300,29 @@ function WorkersTable({
             />
           </Field>
           <div>
-            <p className="mb-1 text-[13px] font-medium text-ink">Role</p>
-            <span className="inline-flex rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-semibold capitalize text-primary">
-              {roleFilter}
-            </span>
-            <p className="mt-1 text-[11px] text-muted">Role is fixed to this section.</p>
+            <p className="mb-2 text-[13px] font-medium text-ink">Roles</p>
+            {roleFilter ? (
+              <>
+                <span className="inline-flex rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-semibold capitalize text-primary">
+                  {roleFilter}
+                </span>
+                <p className="mt-1 text-[11px] text-muted">Role is fixed to this section.</p>
+              </>
+            ) : (
+              <div className="flex flex-wrap gap-3">
+                {(["qa", "transcription"] as OpsRole[]).map((role) => (
+                  <label key={role} className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded accent-primary"
+                      checked={roles.includes(role)}
+                      onChange={() => toggleRole(role)}
+                    />
+                    <span className="capitalize text-ink">{role}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <p className="mb-2 text-[13px] font-medium text-ink">Assign Projects</p>
@@ -340,20 +381,30 @@ export function EvalTranscriptionPanel({ activeUser, activeSection, isSuperAdmin
     if (isSuperAdmin) {
       return subscribeToOpsWorkers(setWorkers);
     }
-    return subscribeToOpsWorkersByAdminEmail(adminEmail, setWorkers);
-  }, [adminEmail, isSuperAdmin]);
+    return subscribeToOpsWorkersByProjects(adminApproval?.assignedProjectIds ?? [], setWorkers);
+  }, [adminApproval?.assignedProjectIds, isSuperAdmin]);
 
   // For super admin: all projects are assignable
   const adminProjects = isSuperAdmin
     ? allProjects
     : allProjects.filter((p) => (adminApproval?.assignedProjectIds ?? []).includes(p.id));
 
-  const roleFilter: OpsRole = activeSection === "transcription-workers" ? "transcription" : "qa";
+  if (activeSection === "qa-review" || activeSection === "transcription" || activeSection === "delivery") {
+    if (activeSection === "delivery" && !isSuperAdmin) {
+      return <EmptyState message="Delivery is only available to super admins." />;
+    }
+    return (
+      <DataCollectionAdminPanel
+        activeUser={activeUser}
+        activeSection={activeSection}
+        isSuperAdmin={isSuperAdmin}
+      />
+    );
+  }
 
   return (
     <WorkersTable
       workers={workers}
-      roleFilter={roleFilter}
       adminProjects={adminProjects}
       allProjects={allProjects}
       activeUser={activeUser}

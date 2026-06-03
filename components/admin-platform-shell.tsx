@@ -29,14 +29,12 @@ const dataCollectionSections = [
   { label: "Projects", section: "projects" },
   { label: "Speakers", section: "speakers" },
   { label: "Sessions", section: "sessions" },
-  { label: "Transcription", section: "transcription" },
-  { label: "QA Review", section: "qa-review" },
-  { label: "Delivery", section: "delivery" },
 ] as const;
 
 const evalTranscriptionSections = [
-  { label: "Transcription Workers", section: "transcription-workers" },
-  { label: "QA Workers", section: "qa-workers" },
+  { label: "Assignments", section: "assignments" },
+  { label: "QA Review", section: "qa-review" },
+  { label: "Transcription", section: "transcription" },
 ] as const;
 
 function AdminPlatformShellContent() {

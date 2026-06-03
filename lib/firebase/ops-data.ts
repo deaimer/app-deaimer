@@ -155,6 +155,46 @@ export function subscribeToOpsWorkersByProject(
   );
 }
 
+export function subscribeToOpsWorkersByProjects(
+  projectIds: string[],
+  callback: (workers: OpsWorker[]) => void,
+  onError?: (err: Error) => void,
+) {
+  const ids = Array.from(new Set(projectIds.filter(Boolean)));
+  if (ids.length === 0) {
+    callback([]);
+    return () => undefined;
+  }
+
+  const workersByProject = new Map<string, OpsWorker[]>();
+  const emit = () => {
+    const merged = new Map<string, OpsWorker>();
+    workersByProject.forEach((workers) => {
+      workers.forEach((worker) => merged.set(worker.email, worker));
+    });
+    callback(Array.from(merged.values()));
+  };
+
+  const unsubscribes = ids.map((projectId) => {
+    const q = query(
+      collection(db(), "opsWorkers"),
+      where("assignedProjectIds", "array-contains", projectId),
+    );
+    return onSnapshot(
+      q,
+      (snap) => {
+        workersByProject.set(projectId, snap.docs.map((d) => mapWorker(d.data(), d.id)));
+        emit();
+      },
+      onError,
+    );
+  });
+
+  return () => {
+    unsubscribes.forEach((unsubscribe) => unsubscribe());
+  };
+}
+
 export async function addWorkerToProject(
   email: string,
   name: string,

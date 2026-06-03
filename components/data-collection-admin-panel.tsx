@@ -10,6 +10,7 @@ import {
   subscribeToDCAssignmentsByProject,
   subscribeToDCProjects,
   subscribeToDCSessions,
+  subscribeToDCSessionsByProjects,
   subscribeToDCSpeakers,
   updateDCProject,
   updateDCSessionAssignment,
@@ -36,6 +37,15 @@ import {
   type OpsRole,
   type OpsWorker,
 } from "@/lib/firebase/ops-data";
+import {
+  downloadBlob,
+  generateDeliveryCSV,
+  generateITNJSON,
+  generateMetadataCSV,
+  generateMetadataJSON,
+  generateQAReportCSV,
+  generateTranscriptionJSON,
+} from "@/lib/ops-exports";
 
 export type DCAdminSection =
   | "projects"
@@ -192,6 +202,35 @@ function formatDate(val: unknown): string {
 }
 
 // ─── Projects section ─────────────────────────────────────────────────────────
+
+function groupSessionsByProject(sessions: DCSession[]) {
+  const groups = new Map<string, DCSession[]>();
+  sessions.forEach((session) => {
+    const key = session.projectId || session.projectName || "unknown";
+    groups.set(key, [...(groups.get(key) ?? []), session]);
+  });
+  return Array.from(groups.entries()).map(([projectId, projectSessions]) => ({
+    projectId,
+    projectName: projectSessions[0]?.projectName || "Untitled project",
+    sessions: projectSessions,
+    participantCount: new Set(projectSessions.map((s) => s.speakerId || s.speakerName).filter(Boolean)).size,
+  }));
+}
+
+function groupSessionsByParticipant(sessions: DCSession[]) {
+  const groups = new Map<string, DCSession[]>();
+  sessions.forEach((session) => {
+    const key = session.speakerId || session.speakerName || "unknown";
+    groups.set(key, [...(groups.get(key) ?? []), session]);
+  });
+  return Array.from(groups.entries()).map(([speakerId, speakerSessions]) => ({
+    speakerId,
+    speakerName: speakerSessions[0]?.speakerName || speakerId,
+    sessions: speakerSessions,
+    duration: speakerSessions.reduce((sum, session) => sum + session.duration, 0),
+    lastDate: speakerSessions[0]?.createdAt,
+  }));
+}
 
 function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const router = useRouter();
@@ -995,8 +1034,10 @@ function ProjectDetail({
 
 // ─── Speakers section ─────────────────────────────────────────────────────────
 
-function SpeakersSection({ activeUser }: { activeUser: User }) {
+function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
+  const [assignments, setAssignments] = useState<DCAssignment[]>([]);
+  const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(isSuperAdmin ? [] : null);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -1007,6 +1048,26 @@ function SpeakersSection({ activeUser }: { activeUser: User }) {
   useEffect(() => {
     return subscribeToDCSpeakers((s) => { setSpeakers(s); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    return subscribeToDCAssignments(setAssignments);
+  }, []);
+
+  useEffect(() => {
+    if (isSuperAdmin) return;
+    return subscribeToAdminApproval(activeUser.email, (approval) => {
+      setAdminProjectIds(approval?.assignedProjectIds ?? []);
+    });
+  }, [activeUser.email, isSuperAdmin]);
+
+  const visibleSpeakers = isSuperAdmin
+    ? speakers
+    : speakers.filter((speaker) =>
+        assignments.some((assignment) =>
+          assignment.speakerEmail === speaker.email &&
+          (adminProjectIds ?? []).includes(assignment.projectId),
+        ),
+      );
 
   async function handleInvite(e: FormEvent) {
     e.preventDefault();
@@ -1042,7 +1103,7 @@ function SpeakersSection({ activeUser }: { activeUser: User }) {
 
       {loading ? (
         <div className="flex justify-center py-10"><span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /></div>
-      ) : speakers.length === 0 ? (
+      ) : visibleSpeakers.length === 0 ? (
         <EmptyState message="No speakers invited yet. Invite your first speaker to get started." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -1055,7 +1116,7 @@ function SpeakersSection({ activeUser }: { activeUser: User }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {speakers.map((s) => (
+              {visibleSpeakers.map((s) => (
                 <tr key={s.id} className="group hover:bg-panelStrong/50">
                   <td className="px-4 py-3 font-medium text-ink">{s.name || "—"}</td>
                   <td className="px-4 py-3 text-muted">{s.email}</td>
@@ -1121,12 +1182,14 @@ function SpeakersSection({ activeUser }: { activeUser: User }) {
 
 // ─── Sessions section ─────────────────────────────────────────────────────────
 
-function SessionsSection({ activeUser: _user }: { activeUser: User }) {
+function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
   const [projects, setProjects] = useState<DCProject[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
   const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
+  const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(isSuperAdmin ? [] : null);
   const [loading, setLoading] = useState(true);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<DCAssignment | null>(null);
   const [filterText, setFilterText] = useState("");
 
@@ -1140,6 +1203,13 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
     return () => { u1(); u2(); u3(); u4(); };
   }, []);
 
+  useEffect(() => {
+    if (isSuperAdmin) return;
+    return subscribeToAdminApproval(activeUser.email, (approval) => {
+      setAdminProjectIds(approval?.assignedProjectIds ?? []);
+    });
+  }, [activeUser.email, isSuperAdmin]);
+
   if (selectedAssignment) {
     return (
       <AssignmentDetail
@@ -1151,6 +1221,173 @@ function SessionsSection({ activeUser: _user }: { activeUser: User }) {
       />
     );
   }
+
+  const scopedProjectIds = isSuperAdmin
+    ? null
+    : new Set(adminProjectIds ?? []);
+  const scopedProjects = isSuperAdmin
+    ? projects
+    : projects.filter((p) => scopedProjectIds?.has(p.id));
+  const scopedAssignments = isSuperAdmin
+    ? assignments
+    : assignments.filter((a) => scopedProjectIds?.has(a.projectId));
+  const scopedSessions = isSuperAdmin
+    ? sessions
+    : sessions.filter((s) => scopedProjectIds?.has(s.projectId));
+  const selectedProject = selectedProjectId
+    ? scopedProjects.find((project) => project.id === selectedProjectId) ?? null
+    : null;
+
+  const sessionProjects = scopedProjects.filter((project) =>
+    scopedAssignments.some((assignment) => assignment.projectId === project.id) ||
+    scopedSessions.some((session) => session.projectId === project.id)
+  );
+
+  if (loading || (!isSuperAdmin && adminProjectIds == null)) {
+    return (
+      <div className="flex justify-center py-10">
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (!selectedProject) {
+    const totalSubmittedScoped = scopedAssignments.filter((a) => a.submittedForReview).length;
+    const totalInProgressScoped = scopedAssignments.filter((a) => !a.submittedForReview).length;
+
+    return (
+      <div className="space-y-6">
+        <SectionHeader title="Sessions" description="Choose a project to view participants and recordings." />
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <MetricCard label="Projects" value={String(sessionProjects.length)} sub="With assignments or sessions" />
+          <MetricCard label="In Progress" value={String(totalInProgressScoped)} sub="Recording" />
+          <MetricCard label="Submitted" value={String(totalSubmittedScoped)} sub="Awaiting QA" />
+        </div>
+
+        {sessionProjects.length === 0 ? (
+          <EmptyState message="No projects with sessions found." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Project", "Participants", "Recorded", "Submitted", "In Progress", "Last Session", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sessionProjects.map((project) => {
+                  const projectAssignments = scopedAssignments.filter((a) => a.projectId === project.id);
+                  const projectSessions = scopedSessions.filter((s) => s.projectId === project.id && Boolean(s.audioUrl));
+                  const submitted = projectAssignments.filter((a) => a.submittedForReview).length;
+                  const inProgress = projectAssignments.length - submitted;
+                  return (
+                    <tr key={project.id} className="hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{project.name}</td>
+                      <td className="px-4 py-3 text-muted">{projectAssignments.length}</td>
+                      <td className="px-4 py-3 text-muted">{projectSessions.length}</td>
+                      <td className="px-4 py-3 text-muted">{submitted}</td>
+                      <td className="px-4 py-3 text-muted">{inProgress}</td>
+                      <td className="px-4 py-3 text-muted">{formatDate(projectSessions[0]?.createdAt)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProjectId(project.id)}
+                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        >
+                          Open →
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const projectAssignments = scopedAssignments.filter((a) => a.projectId === selectedProject.id);
+
+  return (
+    <div className="space-y-6">
+      <button
+        type="button"
+        onClick={() => setSelectedProjectId(null)}
+        className="text-sm font-medium text-muted hover:text-primary"
+      >
+        ← Back to projects
+      </button>
+      <SectionHeader title={selectedProject.name} description="Participants and their recorded sessions." />
+
+      {projectAssignments.length === 0 ? (
+        <EmptyState message="No participants assigned to this project." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Participant", "Gender · Dialect", "Recorded", "Progress", "Status", "Assigned", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {projectAssignments.map((assignment) => {
+                const speaker = speakers.find((s) => s.email === assignment.speakerEmail);
+                const assignmentSessions = scopedSessions.filter((s) => s.assignmentId === assignment.id && Boolean(s.audioUrl));
+                const totalPrompts = selectedProject.tasks.reduce((sum, task) => sum + task.prompts.length, 0);
+                const pct = totalPrompts > 0 ? Math.min(100, Math.round((assignmentSessions.length / totalPrompts) * 100)) : 0;
+                return (
+                  <tr key={assignment.id} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-ink">{speaker?.name || assignment.speakerName || "—"}</p>
+                      <p className="text-xs text-muted">{assignment.speakerEmail}</p>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted">
+                      {[speaker?.gender, speaker?.dialect].filter(Boolean).join(" · ") || "—"}
+                    </td>
+                    <td className="px-4 py-3 text-muted">{assignmentSessions.length}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="text-xs tabular-nums text-muted">
+                          {assignmentSessions.length}/{totalPrompts > 0 ? totalPrompts : "?"}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {assignment.submittedForReview ? (
+                        <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-medium text-blue-800">Submitted</span>
+                      ) : (
+                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">In Progress</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted">{formatDate(assignment.assignedAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAssignment(assignment)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Open →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 
   const filtered = assignments.filter((a) => {
     if (!filterText) return true;
@@ -1413,17 +1650,63 @@ function AssignmentDetail({
 
 function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(isSuperAdmin ? [] : null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "pending" | "in-progress" | "completed">("all");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
 
   useEffect(() => {
-    return subscribeToDCSessions((s) => { setSessions(s); setLoading(false); });
-  }, []);
+    if (isSuperAdmin) return;
+    return subscribeToAdminApproval(activeUser.email, (approval) => {
+      setAdminProjectIds(approval?.assignedProjectIds ?? []);
+    });
+  }, [activeUser.email, isSuperAdmin]);
 
-  const pending = sessions.filter((s) => s.transcriptionStatus === "pending");
-  const asrDone = sessions.filter((s) => s.transcriptionStatus === "asr-done");
-  const completed = sessions.filter((s) => s.transcriptionStatus === "completed");
-  const totalWer = sessions.filter((s) => s.werScore != null).map((s) => s.werScore as number);
+  useEffect(() => {
+    setLoading(true);
+    if (isSuperAdmin) {
+      return subscribeToDCSessions((s) => { setSessions(s); setLoading(false); });
+    }
+    if (adminProjectIds == null) return;
+    return subscribeToDCSessionsByProjects(adminProjectIds, (s) => {
+      setSessions(s);
+      setLoading(false);
+    });
+  }, [adminProjectIds, isSuperAdmin]);
+
+  const transcribable = sessions.filter((s) => Boolean(s.audioUrl) && s.qaStatus === "approved");
+  const pending = transcribable.filter((s) => s.transcriptionStatus === "pending");
+  const inProgress = transcribable.filter((s) => s.transcriptionStatus === "human-review");
+  const completed = transcribable.filter((s) => s.transcriptionStatus === "completed");
+  const assigned = transcribable.filter((s) => Boolean(s.assignedTranscriptorEmail));
+  const totalWer = transcribable.filter((s) => s.werScore != null).map((s) => s.werScore as number);
+  const projectGroups = groupSessionsByProject(transcribable);
+  const selectedProject = selectedProjectId
+    ? projectGroups.find((project) => project.projectId === selectedProjectId)
+    : null;
+  const participantGroups = groupSessionsByParticipant(selectedProject?.sessions ?? []);
+  const selectedParticipant = selectedParticipantId
+    ? participantGroups.find((participant) => participant.speakerId === selectedParticipantId)
+    : null;
+  const selectedParticipantSessions = selectedParticipant?.sessions ?? [];
+  const filteredParticipantSessions = selectedParticipantSessions.filter((s) => {
+    const matchFilter =
+      filter === "all" ||
+      (filter === "pending" && s.transcriptionStatus === "pending") ||
+      (filter === "in-progress" && s.transcriptionStatus === "human-review") ||
+      (filter === "completed" && s.transcriptionStatus === "completed");
+    const q = search.toLowerCase();
+    return matchFilter && (!q || s.id.toLowerCase().includes(q));
+  });
+  const transcriptionFilters = [
+    { key: "all" as const, label: `All (${selectedParticipantSessions.length})` },
+    { key: "pending" as const, label: `Pending (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "pending").length})` },
+    { key: "in-progress" as const, label: `In Progress (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "human-review").length})` },
+    { key: "completed" as const, label: `Completed (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "completed").length})` },
+  ];
   const avgWer = totalWer.length ? (totalWer.reduce((a, b) => a + b, 0) / totalWer.length).toFixed(1) : "—";
 
   async function triggerASR(sessionId: string) {
@@ -1444,13 +1727,200 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
     }
   }
 
+  if (loading) {
+    return (
+      <div className="flex justify-center py-10">
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (selectedProject && selectedParticipant) {
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+          className="text-sm font-medium text-muted hover:text-primary"
+        >
+          ← Back to participants
+        </button>
+        <SectionHeader title={selectedParticipant.speakerName} description={`${selectedProject.projectName} transcription sessions.`} />
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            {transcriptionFilters.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${filter === f.key ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-muted hover:text-ink"}`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="w-48 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-primary"
+            placeholder="Search sessions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {filteredParticipantSessions.length === 0 ? (
+          <EmptyState message="No sessions match this filter." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Session", "Duration", "Rate", "Status", "Transcriptor", "Date"].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredParticipantSessions.map((s) => (
+                  <tr key={s.id} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
+                    <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
+                    <td className="px-4 py-3 text-muted">{s.sampleRate / 1000}k</td>
+                    <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
+                    <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "—"}</td>
+                    <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedProject) {
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+          className="text-sm font-medium text-muted hover:text-primary"
+        >
+          ← Back to projects
+        </button>
+        <SectionHeader title={selectedProject.projectName} description="Participants in this transcription project." />
+
+        {participantGroups.length === 0 ? (
+          <EmptyState message="No participants in this transcription queue." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Participant", "Sessions", "Pending", "In Progress", "Completed", "Duration", "Transcriptor", "Last Date", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {participantGroups.map((participant) => {
+                  const pendingForParticipant = participant.sessions.filter((s) => s.transcriptionStatus === "pending").length;
+                  const inProgressForParticipant = participant.sessions.filter((s) => s.transcriptionStatus === "human-review").length;
+                  const completedForParticipant = participant.sessions.filter((s) => s.transcriptionStatus === "completed").length;
+                  const transcriptors = Array.from(new Set(participant.sessions.map((s) => s.assignedTranscriptorEmail).filter(Boolean)));
+                  return (
+                    <tr key={participant.speakerId} className="hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{participant.speakerName}</td>
+                      <td className="px-4 py-3 text-muted">{participant.sessions.length}</td>
+                      <td className="px-4 py-3 text-muted">{pendingForParticipant}</td>
+                      <td className="px-4 py-3 text-muted">{inProgressForParticipant}</td>
+                      <td className="px-4 py-3 text-muted">{completedForParticipant}</td>
+                      <td className="px-4 py-3 text-muted">{formatDuration(participant.duration)}</td>
+                      <td className="px-4 py-3 text-muted">{transcriptors.join(", ") || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
+                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        >
+                          Open →
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <SectionHeader title="Transcription" description="Manage transcription workflows across all sessions." />
+      <SectionHeader title="Transcription" description="Choose a project to view transcription participants." />
 
       <div className="grid gap-4 sm:grid-cols-4">
         <MetricCard label="Pending" value={String(pending.length)} sub="Awaiting transcription" />
-        <MetricCard label="ASR Done" value={String(asrDone.length)} sub="Ready for human review" />
+        <MetricCard label="Assigned" value={String(assigned.length)} sub={`${inProgress.length} in human review`} />
+        <MetricCard label="Completed" value={String(completed.length)} sub="Fully transcribed" />
+        <MetricCard label="Avg WER" value={avgWer === "—" ? "—" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
+      </div>
+
+      {projectGroups.length === 0 ? (
+        <EmptyState message="No QA-approved sessions are ready for transcription." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Project", "Participants", "Pending", "In Progress", "Completed", "Sessions", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {projectGroups.map((project) => {
+                const pendingForProject = project.sessions.filter((s) => s.transcriptionStatus === "pending").length;
+                const inProgressForProject = project.sessions.filter((s) => s.transcriptionStatus === "human-review").length;
+                const completedForProject = project.sessions.filter((s) => s.transcriptionStatus === "completed").length;
+                return (
+                  <tr key={project.projectId} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-medium text-ink">{project.projectName}</td>
+                    <td className="px-4 py-3 text-muted">{project.participantCount}</td>
+                    <td className="px-4 py-3 text-muted">{pendingForProject}</td>
+                    <td className="px-4 py-3 text-muted">{inProgressForProject}</td>
+                    <td className="px-4 py-3 text-muted">{completedForProject}</td>
+                    <td className="px-4 py-3 text-muted">{project.sessions.length}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProjectId(project.projectId)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Open →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader title="Transcription" description="Track QA-approved recordings assigned to transcription workers." />
+
+      <div className="grid gap-4 sm:grid-cols-4">
+        <MetricCard label="Pending" value={String(pending.length)} sub="Awaiting transcription" />
+        <MetricCard label="Assigned" value={String(assigned.length)} sub={`${inProgress.length} in human review`} />
         <MetricCard label="Completed" value={String(completed.length)} sub="Fully transcribed" />
         <MetricCard label="Avg WER" value={avgWer === "—" ? "—" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
       </div>
@@ -1462,19 +1932,20 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Session", "Project", "Speaker", "Duration", "Status", "WER", "Actions"].map((h) => (
+                {["Session", "Project", "Speaker", "Duration", "Status", "Transcriptor", "WER", "Actions"].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {sessions.map((s) => (
+              {transcribable.map((s) => (
                 <tr key={s.id}>
                   <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}…</td>
                   <td className="px-4 py-3 text-ink">{s.projectName}</td>
                   <td className="px-4 py-3 text-muted">{s.speakerName || s.speakerId}</td>
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
+                  <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "—"}</td>
                   <td className="px-4 py-3 text-muted">{s.werScore != null ? `${s.werScore}%` : "—"}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
@@ -1504,6 +1975,11 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
               ))}
             </tbody>
           </table>
+          {transcribable.length === 0 && (
+            <div className="border-t border-slate-100 px-6 py-8 text-center text-sm text-muted">
+              No QA-approved sessions are ready for transcription.
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1512,30 +1988,66 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
 
 // ─── QA Review section ────────────────────────────────────────────────────────
 
-function QAReviewSection({ activeUser }: { activeUser: User }) {
-  const [assignments, setAssignments] = useState<DCAssignment[]>([]);
-  const [projects, setProjects] = useState<DCProject[]>([]);
+function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(isSuperAdmin ? [] : null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "to-review" | "approved" | "rejected">("all");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState<string | null>(null);
   const [noteInput, setNoteInput] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    let loadedCount = 0;
-    const done = () => { if (++loadedCount >= 3) setLoading(false); };
-    const u1 = subscribeToDCAssignments((a) => { setAssignments(a); done(); });
-    const u2 = subscribeToDCProjects((p) => { setProjects(p); done(); });
-    const u3 = subscribeToDCSessions((s) => { setSessions(s); done(); });
-    return () => { u1(); u2(); u3(); };
-  }, []);
+    if (isSuperAdmin) return;
+    return subscribeToAdminApproval(activeUser.email, (approval) => {
+      setAdminProjectIds(approval?.assignedProjectIds ?? []);
+    });
+  }, [activeUser.email, isSuperAdmin]);
 
-  const submitted = assignments.filter((a) => a.submittedForReview);
+  useEffect(() => {
+    setLoading(true);
+    if (isSuperAdmin) {
+      return subscribeToDCSessions((s) => { setSessions(s); setLoading(false); });
+    }
+    if (adminProjectIds == null) return;
+    return subscribeToDCSessionsByProjects(adminProjectIds, (s) => {
+      setSessions(s);
+      setLoading(false);
+    });
+  }, [adminProjectIds, isSuperAdmin]);
+
   const allSessions = sessions.filter((s) => Boolean(s.audioUrl));
+  const assigned = allSessions.filter((s) => Boolean(s.assignedQAEmail));
   const approved = allSessions.filter((s) => s.qaStatus === "approved");
   const rejected = allSessions.filter((s) => s.qaStatus === "rejected");
   const pending = allSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
   const approvalRate = allSessions.length ? Math.round((approved.length / allSessions.length) * 100) : 0;
+  const projectGroups = groupSessionsByProject(allSessions);
+  const selectedProject = selectedProjectId
+    ? projectGroups.find((project) => project.projectId === selectedProjectId)
+    : null;
+  const participantGroups = groupSessionsByParticipant(selectedProject?.sessions ?? []);
+  const selectedParticipant = selectedParticipantId
+    ? participantGroups.find((participant) => participant.speakerId === selectedParticipantId)
+    : null;
+  const selectedParticipantSessions = selectedParticipant?.sessions ?? [];
+  const filteredParticipantSessions = selectedParticipantSessions.filter((s) => {
+    const matchFilter =
+      filter === "all" ||
+      (filter === "to-review" && (s.qaStatus === "pending" || s.qaStatus === "in-review")) ||
+      (filter === "approved" && s.qaStatus === "approved") ||
+      (filter === "rejected" && s.qaStatus === "rejected");
+    const q = search.toLowerCase();
+    return matchFilter && (!q || (s.promptText ?? "").toLowerCase().includes(q) || s.id.toLowerCase().includes(q));
+  });
+  const qaFilters = [
+    { key: "all" as const, label: `All (${selectedParticipantSessions.length})` },
+    { key: "to-review" as const, label: `To Review (${selectedParticipantSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length})` },
+    { key: "approved" as const, label: `Approved (${selectedParticipantSessions.filter((s) => s.qaStatus === "approved").length})` },
+    { key: "rejected" as const, label: `Rejected (${selectedParticipantSessions.filter((s) => s.qaStatus === "rejected").length})` },
+  ];
 
   async function handleQAAction(session: DCSession, status: DCQAStatus) {
     setUpdating(session.id);
@@ -1546,316 +2058,477 @@ function QAReviewSection({ activeUser }: { activeUser: User }) {
     }
   }
 
-  function toggleExpand(id: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  if (loading) {
+    return (
+      <div className="flex justify-center py-10">
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+      </div>
+    );
+  }
+
+  if (selectedProject && selectedParticipant) {
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+          className="text-sm font-medium text-muted hover:text-primary"
+        >
+          ← Back to participants
+        </button>
+        <SectionHeader title={selectedParticipant.speakerName} description={`${selectedProject.projectName} QA sessions.`} />
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            {qaFilters.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition ${filter === f.key ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-muted hover:text-ink"}`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="w-48 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-primary"
+            placeholder="Search sessions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {filteredParticipantSessions.length === 0 ? (
+          <EmptyState message="No sessions match this filter." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Session", "Prompt", "Duration", "QA Status", "QA Worker", "Score", "Date"].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredParticipantSessions.map((s) => (
+                  <tr key={s.id} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
+                    <td className="max-w-[220px] px-4 py-3 text-muted">
+                      <span className="block truncate">{s.promptText ?? "—"}</span>
+                      {s.submissionCount > 0 && (
+                        <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                          Resubmission #{s.submissionCount}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
+                    <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
+                    <td className="px-4 py-3 text-muted">{s.assignedQAEmail || "—"}</td>
+                    <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "—"}</td>
+                    <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedProject) {
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
+          className="text-sm font-medium text-muted hover:text-primary"
+        >
+          ← Back to projects
+        </button>
+        <SectionHeader title={selectedProject.projectName} description="Participants in this QA project." />
+
+        {participantGroups.length === 0 ? (
+          <EmptyState message="No participants in this QA queue." />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Participant", "Sessions", "To Review", "Approved", "Rejected", "Avg Score", "QA Worker", "Last Date", ""].map((h) => (
+                    <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {participantGroups.map((participant) => {
+                  const toReviewForParticipant = participant.sessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+                  const approvedForParticipant = participant.sessions.filter((s) => s.qaStatus === "approved").length;
+                  const rejectedForParticipant = participant.sessions.filter((s) => s.qaStatus === "rejected").length;
+                  const scored = participant.sessions.filter((s) => s.qaScore != null).map((s) => s.qaScore as number);
+                  const avgScore = scored.length ? (scored.reduce((sum, score) => sum + score, 0) / scored.length).toFixed(1) : "—";
+                  const qaWorkers = Array.from(new Set(participant.sessions.map((s) => s.assignedQAEmail).filter(Boolean)));
+                  return (
+                    <tr key={participant.speakerId} className="hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{participant.speakerName}</td>
+                      <td className="px-4 py-3 text-muted">{participant.sessions.length}</td>
+                      <td className="px-4 py-3 text-muted">{toReviewForParticipant}</td>
+                      <td className="px-4 py-3 text-muted">{approvedForParticipant}</td>
+                      <td className="px-4 py-3 text-muted">{rejectedForParticipant}</td>
+                      <td className="px-4 py-3 text-muted">{avgScore === "—" ? "—" : `${avgScore}/5`}</td>
+                      <td className="px-4 py-3 text-muted">{qaWorkers.join(", ") || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
+                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        >
+                          Open →
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-      <SectionHeader title="QA Review" description="Review submitted assignments and approve or reject each prompt recording." />
+      <SectionHeader title="QA Review" description="Choose a project to view QA participants." />
 
       <div className="grid gap-4 sm:grid-cols-4">
-        <MetricCard label="Awaiting QA" value={String(submitted.length)} sub="Submitted assignments" />
-        <MetricCard label="Pending" value={String(pending.length)} sub="Recordings to review" />
+        <MetricCard label="Pending QA" value={String(pending.length)} sub="Recordings to review" />
+        <MetricCard label="Assigned" value={String(assigned.length)} sub="Have a QA worker" />
+        <MetricCard label="Approved" value={String(approved.length)} sub="Passed QA" />
+        <MetricCard label="Approval rate" value={`${approvalRate}%`} sub={`${rejected.length} rejected`} />
+      </div>
+
+      {projectGroups.length === 0 ? (
+        <EmptyState message="No recorded sessions are ready for QA review." />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Project", "Participants", "To Review", "Approved", "Rejected", "Sessions", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {projectGroups.map((project) => {
+                const toReviewForProject = project.sessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
+                const approvedForProject = project.sessions.filter((s) => s.qaStatus === "approved").length;
+                const rejectedForProject = project.sessions.filter((s) => s.qaStatus === "rejected").length;
+                return (
+                  <tr key={project.projectId} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3 font-medium text-ink">{project.projectName}</td>
+                    <td className="px-4 py-3 text-muted">{project.participantCount}</td>
+                    <td className="px-4 py-3 text-muted">{toReviewForProject}</td>
+                    <td className="px-4 py-3 text-muted">{approvedForProject}</td>
+                    <td className="px-4 py-3 text-muted">{rejectedForProject}</td>
+                    <td className="px-4 py-3 text-muted">{project.sessions.length}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProjectId(project.projectId)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Open →
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <SectionHeader title="QA Review" description="Track recorded sessions assigned to QA workers." />
+
+      <div className="grid gap-4 sm:grid-cols-4">
+        <MetricCard label="Pending QA" value={String(pending.length)} sub="Recordings to review" />
+        <MetricCard label="Assigned" value={String(assigned.length)} sub="Have a QA worker" />
         <MetricCard label="Approved" value={String(approved.length)} sub="Passed QA" />
         <MetricCard label="Approval rate" value={`${approvalRate}%`} sub={`${rejected.length} rejected`} />
       </div>
 
       {loading ? (
         <div className="flex justify-center py-10"><span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /></div>
-      ) : submitted.length === 0 ? (
-        <EmptyState message="No assignments submitted for QA review yet." />
+      ) : allSessions.length === 0 ? (
+        <EmptyState message="No recorded sessions are ready for QA review." />
       ) : (
-        <div className="space-y-4">
-          {submitted.map((a) => {
-            const assignmentSessions = sessions.filter((s) => s.assignmentId === a.id && Boolean(s.audioUrl));
-            const project = projects.find((p) => p.id === a.projectId);
-            const tasks = project?.tasks ?? [];
-            const expanded = expandedIds.has(a.id);
-            // Exclude phantom sessions (audioUrl exists but task/prompt no longer in project structure)
-            const validSessions = tasks.length === 0 ? assignmentSessions : assignmentSessions.filter((s) => {
-              if (!s.taskId || s.promptIndex == null) return false;
-              const task = tasks.find((t) => t.id === s.taskId);
-              return task != null && s.promptIndex >= 0 && s.promptIndex < task.prompts.length;
-            });
-            const approvedForA = validSessions.filter((s) => s.qaStatus === "approved").length;
-            const pendingForA = validSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review").length;
-            const rejectedForA = validSessions.filter((s) => s.qaStatus === "rejected").length;
-
-            return (
-              <div key={a.id} className="overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white shadow-sm">
-                <button
-                  type="button"
-                  className="w-full p-5 text-left transition-colors hover:bg-panelStrong/50"
-                  onClick={() => toggleExpand(a.id)}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs text-muted">{a.projectName}</p>
-                      <h3 className="font-semibold text-ink">{a.speakerName}</h3>
-                      <p className="text-xs text-muted">{a.speakerEmail}</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted">{approvedForA}/{validSessions.length} approved</span>
-                      {rejectedForA > 0 && (
-                        <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700">
-                          {rejectedForA} rejected
-                        </span>
-                      )}
-                      {pendingForA > 0 && (
-                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
-                          {pendingForA} pending
-                        </span>
-                      )}
-                      {pendingForA === 0 && rejectedForA === 0 && (
-                        <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
-                          All approved
-                        </span>
-                      )}
-                      <span className="text-sm text-muted">{expanded ? "▲" : "▼"}</span>
-                    </div>
-                  </div>
-                </button>
-
-                {expanded && (
-                  <div className="space-y-5 border-t border-slate-100 p-5">
-                    {tasks.length > 0 ? (
-                      tasks.map((task, ti) => {
-                        const taskSessions = assignmentSessions.filter((s) => s.taskId === task.id);
-                        return (
-                          <div key={task.id}>
-                            <div className="mb-3 flex items-center gap-2">
-                              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
-                                {ti + 1}
-                              </div>
-                              <p className="text-sm font-semibold text-ink">{task.title}</p>
-                              <span className="ml-auto text-xs text-muted">{taskSessions.length}/{task.prompts.length}</span>
-                            </div>
-                            <div className="space-y-3 pl-8">
-                              {task.prompts.map((prompt, pi) => {
-                                const s = taskSessions.find((sess) => sess.promptIndex === pi);
-                                if (!s) {
-                                  return (
-                                    <div key={pi} className="rounded-xl border border-dashed border-slate-200 px-4 py-3">
-                                      <div className="flex items-start gap-2">
-                                        <span className="font-mono text-xs text-muted">P{pi + 1}</span>
-                                        <p className="text-sm italic text-muted">{prompt.text}</p>
-                                      </div>
-                                      <p className="mt-1 text-xs text-muted">Not recorded</p>
-                                    </div>
-                                  );
-                                }
-                                return (
-                                  <div
-                                    key={pi}
-                                    className={`rounded-xl border p-4 ${
-                                      s.qaStatus === "approved"
-                                        ? "border-emerald-200 bg-emerald-50/40"
-                                        : s.qaStatus === "rejected"
-                                          ? "border-rose-200 bg-rose-50/40"
-                                          : "border-slate-200 bg-white"
-                                    }`}
-                                  >
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div className="flex items-start gap-2">
-                                        <span className="mt-0.5 font-mono text-xs text-muted">P{pi + 1}</span>
-                                        <p className="text-sm leading-relaxed text-ink">{prompt.text}</p>
-                                      </div>
-                                      <StatusBadge status={s.qaStatus} />
-                                    </div>
-
-                                    {s.audioUrl && (
-                                      <div className="mt-3">
-                                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                                        <audio controls src={s.audioUrl} className="w-full rounded-xl" />
-                                      </div>
-                                    )}
-
-                                    {s.qaStatus === "rejected" && s.qaNote && (
-                                      <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-                                        <strong>Reason:</strong> {s.qaNote}
-                                      </div>
-                                    )}
-
-                                    {s.qaStatus !== "approved" && (
-                                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                                        <input
-                                          className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary"
-                                          placeholder="Rejection reason (optional)…"
-                                          value={noteInput[s.id] ?? (s.qaNote || "")}
-                                          onChange={(e) => setNoteInput((n) => ({ ...n, [s.id]: e.target.value }))}
-                                        />
-                                        <button
-                                          type="button"
-                                          disabled={updating === s.id}
-                                          onClick={() => void handleQAAction(s, "approved")}
-                                          className="whitespace-nowrap rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                                        >
-                                          {updating === s.id ? "…" : "Approve"}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={updating === s.id}
-                                          onClick={() => void handleQAAction(s, "rejected")}
-                                          className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-                                        >
-                                          {updating === s.id ? "…" : "Reject"}
-                                        </button>
-                                      </div>
-                                    )}
-
-                                    {s.qaStatus === "approved" && (
-                                      <p className="mt-2 text-xs font-medium text-emerald-700">✓ Approved</p>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="space-y-3">
-                        {assignmentSessions.map((s) => (
-                          <div
-                            key={s.id}
-                            className={`rounded-xl border p-4 ${
-                              s.qaStatus === "approved"
-                                ? "border-emerald-200 bg-emerald-50/40"
-                                : s.qaStatus === "rejected"
-                                  ? "border-rose-200 bg-rose-50/40"
-                                  : "border-slate-200"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm text-ink">{s.promptText || "—"}</p>
-                              <StatusBadge status={s.qaStatus} />
-                            </div>
-                            {s.audioUrl && (
-                              <div className="mt-3">
-                                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                                <audio controls src={s.audioUrl} className="w-full rounded-xl" />
-                              </div>
-                            )}
-                            {s.qaStatus !== "approved" && (
-                              <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <input
-                                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary"
-                                  placeholder="Rejection reason (optional)…"
-                                  value={noteInput[s.id] ?? (s.qaNote || "")}
-                                  onChange={(e) => setNoteInput((n) => ({ ...n, [s.id]: e.target.value }))}
-                                />
-                                <button
-                                  type="button"
-                                  disabled={updating === s.id}
-                                  onClick={() => void handleQAAction(s, "approved")}
-                                  className="whitespace-nowrap rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                                >
-                                  {updating === s.id ? "…" : "Approve"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={updating === s.id}
-                                  onClick={() => void handleQAAction(s, "rejected")}
-                                  className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-                                >
-                                  {updating === s.id ? "…" : "Reject"}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Session", "Project", "Speaker", "Prompt", "Duration", "QA Status", "QA Worker", "Score", "Date", "Actions"].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {allSessions.map((s) => (
+                <tr key={s.id} className="align-top">
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
+                  <td className="px-4 py-3 text-ink">{s.projectName}</td>
+                  <td className="px-4 py-3 text-muted">{s.speakerName || s.speakerId}</td>
+                  <td className="max-w-xs px-4 py-3 text-muted">
+                    <p className="line-clamp-2">{s.promptText || "-"}</p>
+                    {s.audioUrl && (
+                      <div className="mt-2 min-w-56">
+                        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                        <audio controls src={s.audioUrl} className="w-full rounded-xl" />
                       </div>
                     )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                    {s.qaStatus === "rejected" && s.qaNote && (
+                      <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                        {s.qaNote}
+                      </p>
+                    )}
+                    {s.qaStatus !== "approved" && (
+                      <input
+                        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-primary"
+                        placeholder="Rejection reason (optional)..."
+                        value={noteInput[s.id] ?? (s.qaNote || "")}
+                        onChange={(e) => setNoteInput((n) => ({ ...n, [s.id]: e.target.value }))}
+                      />
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
+                  <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
+                  <td className="px-4 py-3 text-muted">{s.assignedQAEmail || "-"}</td>
+                  <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "-"}</td>
+                  <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
+                  <td className="px-4 py-3">
+                    {s.qaStatus !== "approved" ? (
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          disabled={updating === s.id}
+                          onClick={() => void handleQAAction(s, "approved")}
+                          className="whitespace-nowrap rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {updating === s.id ? "..." : "Approve"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={updating === s.id}
+                          onClick={() => void handleQAAction(s, "rejected")}
+                          className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+                        >
+                          {updating === s.id ? "..." : "Reject"}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs font-medium text-emerald-700">Approved</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
   );
 }
 
-// ─── Delivery section ─────────────────────────────────────────────────────────
+type DeliveryKind =
+  | "full"
+  | "metadata-json"
+  | "metadata-csv"
+  | "transcription-json"
+  | "qa-csv"
+  | "delivery-csv"
+  | "itn-json";
 
 function DeliverySection({ activeUser: _user }: { activeUser: User }) {
   const [projects, setProjects] = useState<DCProject[]>([]);
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
+  const [deliveryKind, setDeliveryKind] = useState<DeliveryKind>("full");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const u1 = subscribeToDCProjects((p) => { setProjects(p); setLoading(false); });
     const u2 = subscribeToDCSessions(setSessions);
-    return () => { u1(); u2(); };
+    const u3 = subscribeToDCSpeakers(setSpeakers);
+    return () => { u1(); u2(); u3(); };
   }, []);
+
+  const deliveryOptions: { key: DeliveryKind; label: string; description: string }[] = [
+    { key: "full", label: "Full package", description: "All project metadata, transcripts, QA report, tracking, and ITN files." },
+    { key: "metadata-json", label: "Metadata JSON", description: "Structured session and speaker metadata." },
+    { key: "metadata-csv", label: "Metadata CSV", description: "Spreadsheet-ready metadata export." },
+    { key: "transcription-json", label: "Transcripts", description: "Completed transcript records only." },
+    { key: "qa-csv", label: "QA report", description: "Approved session QA details and scores." },
+    { key: "delivery-csv", label: "Delivery tracker", description: "Compact client delivery tracking sheet." },
+    { key: "itn-json", label: "ITN JSON", description: "Transcript records prepared for ITN workflows." },
+  ];
+
+  const speakerMap = new Map<string, DCSpeaker>();
+  speakers.forEach((speaker) => {
+    [speaker.id, speaker.speakerId, speaker.email, speaker.name].filter(Boolean).forEach((key) => {
+      speakerMap.set(key, speaker);
+    });
+  });
+
+  function slugify(value: string) {
+    return (value || "project")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "project";
+  }
+
+  function downloadProjectDelivery(project: DCProject, approvedSessions: DCSession[]) {
+    const baseName = slugify(project.name);
+    const files: { filename: string; content: string; mime: string }[] = [];
+
+    if (deliveryKind === "full" || deliveryKind === "metadata-json") {
+      files.push({
+        filename: `${baseName}-metadata.json`,
+        content: generateMetadataJSON(approvedSessions, speakerMap),
+        mime: "application/json",
+      });
+    }
+    if (deliveryKind === "full" || deliveryKind === "metadata-csv") {
+      files.push({
+        filename: `${baseName}-metadata.csv`,
+        content: generateMetadataCSV(approvedSessions, speakerMap),
+        mime: "text/csv",
+      });
+    }
+    if (deliveryKind === "full" || deliveryKind === "transcription-json") {
+      files.push({
+        filename: `${baseName}-transcriptions.json`,
+        content: generateTranscriptionJSON(approvedSessions, speakerMap),
+        mime: "application/json",
+      });
+    }
+    if (deliveryKind === "full" || deliveryKind === "qa-csv") {
+      files.push({
+        filename: `${baseName}-qa-report.csv`,
+        content: generateQAReportCSV(approvedSessions, speakerMap),
+        mime: "text/csv",
+      });
+    }
+    if (deliveryKind === "full" || deliveryKind === "delivery-csv") {
+      files.push({
+        filename: `${baseName}-delivery-tracker.csv`,
+        content: generateDeliveryCSV(approvedSessions),
+        mime: "text/csv",
+      });
+    }
+    if (deliveryKind === "full" || deliveryKind === "itn-json") {
+      files.push({
+        filename: `${baseName}-itn.json`,
+        content: generateITNJSON(approvedSessions, speakerMap),
+        mime: "application/json",
+      });
+    }
+
+    files.forEach((file) => downloadBlob(file.filename, file.content, file.mime));
+  }
 
   return (
     <div className="space-y-6">
-      <SectionHeader title="Delivery" description="Package and export approved audio data for clients." />
+      <SectionHeader title="Delivery" description="Choose an export type and deliver approved project sessions." />
+
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
+        {deliveryOptions.map((option) => {
+          const selected = deliveryKind === option.key;
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setDeliveryKind(option.key)}
+              className={`rounded-xl border p-4 text-left transition ${
+                selected
+                  ? "border-primary bg-primary/5 shadow-sm"
+                  : "border-slate-200 bg-white hover:border-primary/40 hover:bg-panelStrong/40"
+              }`}
+            >
+              <span className={`text-sm font-semibold ${selected ? "text-primary" : "text-ink"}`}>{option.label}</span>
+              <span className="mt-1 block text-xs leading-5 text-muted">{option.description}</span>
+            </button>
+          );
+        })}
+      </div>
 
       {loading ? (
-        <div className="flex justify-center py-10"><span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /></div>
+        <div className="flex justify-center py-10">
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+        </div>
       ) : projects.length === 0 ? (
         <EmptyState message="No projects to deliver yet." />
       ) : (
-        <div className="space-y-4">
-          {projects.map((p) => {
-            const projectSessions = sessions.filter((s) => s.projectId === p.id);
-            const approvedSessions = projectSessions.filter((s) => s.qaStatus === "approved");
-            const pendingSessions = projectSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
-            const approvedHours = approvedSessions.reduce((sum, s) => sum + s.duration / 3600, 0);
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                {["Project", "Approved", "In QA", "Transcribed", "Ready Hours", "Delivery", ""].map((h) => (
+                  <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {projects.map((project) => {
+                const projectSessions = sessions.filter((s) => s.projectId === project.id);
+                const approvedSessions = projectSessions.filter((s) => s.qaStatus === "approved");
+                const pendingSessions = projectSessions.filter((s) => s.qaStatus === "pending" || s.qaStatus === "in-review");
+                const transcribedSessions = approvedSessions.filter((s) => s.transcriptionStatus === "completed" || Boolean(s.transcriptText));
+                const approvedHours = approvedSessions.reduce((sum, s) => sum + s.duration / 3600, 0);
+                const selectedDelivery = deliveryOptions.find((option) => option.key === deliveryKind);
 
-            return (
-              <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-5">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs text-muted">{p.client}</p>
-                    <h3 className="font-semibold text-ink">{p.name}</h3>
-                    <p className="mt-0.5 text-xs text-muted">{p.dialect}</p>
-                  </div>
-                  <StatusBadge status={p.status} />
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                    <p className="text-[11px] uppercase tracking-widest text-emerald-700">Approved</p>
-                    <p className="mt-1 text-lg font-light text-ink">{approvedSessions.length} <span className="text-xs text-muted">sessions</span></p>
-                    <p className="text-xs text-muted">{approvedHours.toFixed(2)}h ready</p>
-                  </div>
-                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-                    <p className="text-[11px] uppercase tracking-widest text-amber-700">In QA</p>
-                    <p className="mt-1 text-lg font-light text-ink">{pendingSessions.length} <span className="text-xs text-muted">sessions</span></p>
-                  </div>
-                  <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                    <p className="text-[11px] uppercase tracking-widest text-muted">Total</p>
-                    <p className="mt-1 text-lg font-light text-ink">{projectSessions.length} <span className="text-xs text-muted">sessions</span></p>
-                  </div>
-                </div>
-                <div className="mt-4 flex items-center gap-3">
-                  <button
-                    type="button"
-                    disabled={approvedSessions.length === 0}
-                    className="rounded-full bg-primary px-5 py-2 text-xs font-semibold text-white hover:bg-primaryStrong disabled:cursor-not-allowed disabled:opacity-40"
-                    onClick={() => alert("Package generation requires a backend Cloud Function to bundle audio + metadata ZIP. The data is ready.")}
-                  >
-                    Generate Package
-                  </button>
-                  <p className="text-xs text-muted">
-                    Folder structure: {p.name}/ → speaker_id/ → audio + metadata.json
-                  </p>
-                </div>
-              </div>
-            );
-          })}
+                return (
+                  <tr key={project.id} className="hover:bg-panelStrong/40">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-ink">{project.name}</p>
+                      <p className="text-xs text-muted">{[project.client, project.dialect].filter(Boolean).join(" · ") || "No client set"}</p>
+                    </td>
+                    <td className="px-4 py-3 text-muted">{approvedSessions.length}</td>
+                    <td className="px-4 py-3 text-muted">{pendingSessions.length}</td>
+                    <td className="px-4 py-3 text-muted">{transcribedSessions.length}</td>
+                    <td className="px-4 py-3 text-muted">{approvedHours.toFixed(2)}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary">
+                        {selectedDelivery?.label ?? "Delivery"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        disabled={approvedSessions.length === 0}
+                        onClick={() => downloadProjectDelivery(project, approvedSessions)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Download
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
   );
+
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -1864,11 +2537,11 @@ export function DataCollectionAdminPanel({ activeUser, activeSection, isSuperAdm
   return (
     <div>
       {activeSection === "projects" && <ProjectsSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
-      {activeSection === "speakers" && <SpeakersSection activeUser={activeUser} />}
-      {activeSection === "sessions" && <SessionsSection activeUser={activeUser} />}
+      {activeSection === "speakers" && <SpeakersSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
+      {activeSection === "sessions" && <SessionsSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "transcription" && <TranscriptionSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
-      {activeSection === "qa-review" && <QAReviewSection activeUser={activeUser} />}
-      {activeSection === "delivery" && <DeliverySection activeUser={activeUser} />}
+      {activeSection === "qa-review" && <QAReviewSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
+      {activeSection === "delivery" && (isSuperAdmin ? <DeliverySection activeUser={activeUser} /> : <EmptyState message="Delivery is only available to super admins." />)}
     </div>
   );
 }

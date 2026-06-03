@@ -90,8 +90,12 @@ import {
   DataCollectionAdminPanel,
   type DCAdminSection,
 } from "@/components/data-collection-admin-panel";
+import {
+  EvalTranscriptionPanel,
+  type EvalTranscriptionSection,
+} from "@/components/eval-transcription-panel";
 
-type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection";
+type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection" | "evaluation-transcription";
 type AccessTarget = "clients" | "admins" | "super";
 type AccessMode = "list" | "new" | "edit";
 type AdminDefaultsTab = "basics" | "services" | "role" | "pay" | "policies";
@@ -2080,6 +2084,7 @@ export function SuperAdminPortal({
   initialEditingEmail = null,
   initialWorkforceSection = "partners",
   initialDCSection = "projects",
+  initialEvalSection = "assignments",
   platformSideMenuItems = [],
 }: {
   initialView?: SuperView;
@@ -2088,6 +2093,7 @@ export function SuperAdminPortal({
   initialEditingEmail?: string | null;
   initialWorkforceSection?: SuperWorkforceSection;
   initialDCSection?: DCAdminSection;
+  initialEvalSection?: EvalTranscriptionSection;
   platformSideMenuItems?: PlatformSideMenuItem[];
 }) {
   const router = useRouter();
@@ -2112,6 +2118,7 @@ export function SuperAdminPortal({
   const [activeWorkforceSection, setActiveWorkforceSection] =
     useState<SuperWorkforceSection>(initialWorkforceSection);
   const [activeDCSection, setActiveDCSection] = useState<DCAdminSection>(initialDCSection);
+  const [activeEvalSection, setActiveEvalSection] = useState<EvalTranscriptionSection>(initialEvalSection);
   const [isCurrentUserSuperAdmin, setIsCurrentUserSuperAdmin] = useState(false);
   const [isSuperAdminLoaded, setIsSuperAdminLoaded] = useState(false);
   const [superAdmins, setSuperAdmins] = useState<SuperAccessRecord[]>([]);
@@ -2168,6 +2175,10 @@ export function SuperAdminPortal({
   useEffect(() => {
     setActiveDCSection(initialDCSection);
   }, [initialDCSection]);
+
+  useEffect(() => {
+    setActiveEvalSection(initialEvalSection);
+  }, [initialEvalSection]);
 
   useEffect(() => {
     if (initialAccessMode !== "edit" || initialAccessTarget !== "admins" || !initialEditingEmail) {
@@ -2956,6 +2967,12 @@ export function SuperAdminPortal({
               <DataCollectionAdminPanel
                 activeUser={activeUser}
                 activeSection={activeDCSection}
+                isSuperAdmin
+              />
+            ) : activeView === "evaluation-transcription" ? (
+              <EvalTranscriptionPanel
+                activeUser={activeUser}
+                activeSection={activeEvalSection}
                 isSuperAdmin
               />
             ) : activeView === "company" ? (

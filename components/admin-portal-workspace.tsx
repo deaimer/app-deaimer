@@ -622,7 +622,7 @@ export function AdminPortalWorkspace({
 
   const selectedDCSection =
     selectedServiceSlug === "data-collection-sourcing"
-      ? ((["projects", "speakers", "sessions", "transcription", "qa-review", "delivery"].includes(
+      ? ((["projects", "speakers", "sessions"].includes(
             requestedSection ?? "",
           )
             ? requestedSection
@@ -631,9 +631,9 @@ export function AdminPortalWorkspace({
 
   const selectedEvalSection =
     selectedServiceSlug === "evaluation-transcription"
-      ? ((["transcription-workers", "qa-workers"].includes(requestedSection ?? "")
+      ? ((["assignments", "qa-review", "transcription"].includes(requestedSection ?? "")
             ? requestedSection
-            : "transcription-workers") as EvalTranscriptionSection)
+            : "assignments") as EvalTranscriptionSection)
       : null;
 
   const selectedProfileSectionConfig = profileSections.find(
@@ -2586,7 +2586,7 @@ export function AdminPortalWorkspace({
             {selectedServiceSlug === "evaluation-transcription" ? (
               <EvalTranscriptionPanel
                 activeUser={activeUser}
-                activeSection={selectedEvalSection ?? "transcription-workers"}
+                activeSection={selectedEvalSection ?? "assignments"}
                 isSuperAdmin={isSuperAdminEmail(activeUser.email)}
               />
             ) : null}
