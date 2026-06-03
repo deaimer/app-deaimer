@@ -9,9 +9,9 @@ import {
 import { DataCollectionAdminPanel } from "@/components/data-collection-admin-panel";
 import { subscribeToAdminApproval, type AdminApprovalRecord } from "@/lib/firebase/admin-access";
 import {
+  fetchOpsWorkersByProjects,
   saveOpsWorker,
   subscribeToOpsWorkers,
-  subscribeToOpsWorkersByProjects,
   updateOpsWorkerStatus,
   type OpsRole,
   type OpsWorker,
@@ -104,6 +104,7 @@ function WorkersTable({
   activeUser,
   adminEmail,
   adminApproval,
+  onWorkersChanged,
 }: {
   workers: OpsWorker[];
   roleFilter?: OpsRole;
@@ -112,6 +113,7 @@ function WorkersTable({
   activeUser: User;
   adminEmail: string;
   adminApproval: AdminApprovalRecord | null;
+  onWorkersChanged?: () => void;
 }) {
   const [showPanel, setShowPanel] = useState(false);
   const [editTarget, setEditTarget] = useState<OpsWorker | null>(null);
@@ -130,6 +132,46 @@ function WorkersTable({
 
   const adminProjectIdSet = new Set(assignableProjects.map((p) => p.id));
   const filtered = roleFilter ? workers.filter((w) => w.roles.includes(roleFilter)) : workers;
+  const ownerName = adminApproval?.contactName || activeUser.displayName || adminEmail;
+
+  function visibleProjectIdsFor(w: OpsWorker) {
+    return adminApproval
+      ? w.assignedProjectIds.filter((id) => adminProjectIdSet.has(id))
+      : w.assignedProjectIds;
+  }
+
+  function ownerForProject(w: OpsWorker, projectId: string) {
+    const owner = w.projectAssignmentOwners?.[projectId];
+    if (owner?.adminEmail) {
+      return {
+        email: owner.adminEmail,
+        name: owner.adminName || owner.adminEmail,
+      };
+    }
+    if (w.invitedByAdminEmail) {
+      return {
+        email: w.invitedByAdminEmail,
+        name: w.invitedByName || w.invitedByAdminEmail,
+      };
+    }
+    return {
+      email: w.invitedByEmail,
+      name: w.invitedByName || w.invitedByEmail || "Super admin",
+    };
+  }
+
+  function ownerLabelsFor(w: OpsWorker) {
+    return Array.from(new Set(
+      visibleProjectIdsFor(w)
+        .map((projectId) => ownerForProject(w, projectId).name)
+        .filter(Boolean),
+    ));
+  }
+
+  function canManageWorker(w: OpsWorker) {
+    if (!adminApproval) return true;
+    return visibleProjectIdsFor(w).some((projectId) => ownerForProject(w, projectId).email === adminEmail);
+  }
 
   function openNew() {
     setEditTarget(null);
@@ -139,6 +181,7 @@ function WorkersTable({
   }
 
   function openEdit(w: OpsWorker) {
+    if (!canManageWorker(w)) return;
     setEditTarget(w);
     setEmail(w.email); setName(w.name);
     setRoles(w.roles);
@@ -163,6 +206,7 @@ function WorkersTable({
     e.preventDefault();
     if (!email.trim()) { setFormError("Email is required."); return; }
     if (!roleFilter && roles.length === 0) { setFormError("Select at least one role."); return; }
+    if (editTarget && !canManageWorker(editTarget)) { setFormError("Only the admin who added this worker can edit it."); return; }
     setSaving(true);
     setFormError("");
     try {
@@ -192,8 +236,11 @@ function WorkersTable({
         "admin",
         adminEmail,
         !existingWorker,
+        ownerName,
+        projectIds,
       );
       setShowPanel(false);
+      onWorkersChanged?.();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to save worker.");
     } finally {
@@ -202,7 +249,9 @@ function WorkersTable({
   }
 
   async function toggleStatus(w: OpsWorker) {
+    if (!canManageWorker(w)) return;
     await updateOpsWorkerStatus(w.email, w.status === "active" ? "paused" : "active");
+    onWorkersChanged?.();
   }
 
   const roleLabel = roleFilter === "transcription" ? "Transcription" : roleFilter === "qa" ? "QA" : "Assignments";
@@ -231,16 +280,16 @@ function WorkersTable({
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Name", "Email", "Roles", "Projects", "Status", ""].map((h) => (
+                {["Name", "Email", "Roles", "Projects", "Added by", "Status", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((w) => {
-                const visibleProjectIds = adminApproval
-                  ? w.assignedProjectIds.filter((id) => adminProjectIdSet.has(id))
-                  : w.assignedProjectIds;
+                const visibleProjectIds = visibleProjectIdsFor(w);
+                const ownerLabels = ownerLabelsFor(w);
+                const canManage = canManageWorker(w);
                 return (
                   <tr key={w.email} className="group hover:bg-panelStrong/40">
                     <td className="px-4 py-3 font-medium text-ink">{w.name || "—"}</td>
@@ -259,14 +308,19 @@ function WorkersTable({
                             .map((id) => allProjects.find((p) => p.id === id)?.name ?? id)
                             .join(", ")}
                     </td>
+                    <td className="px-4 py-3 text-muted">{ownerLabels.join(", ") || "—"}</td>
                     <td className="px-4 py-3"><StatusBadge status={w.status} /></td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
-                        <button type="button" onClick={() => openEdit(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">Edit</button>
-                        <button type="button" onClick={() => void toggleStatus(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:bg-slate-100">
-                          {w.status === "active" ? "Pause" : "Activate"}
-                        </button>
-                      </div>
+                      {canManage ? (
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
+                          <button type="button" onClick={() => openEdit(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10">Edit</button>
+                          <button type="button" onClick={() => void toggleStatus(w)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:bg-slate-100">
+                            {w.status === "active" ? "Pause" : "Activate"}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted">View only</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -367,6 +421,7 @@ export function EvalTranscriptionPanel({ activeUser, activeSection, isSuperAdmin
   const [workers, setWorkers] = useState<OpsWorker[]>([]);
   const [allProjects, setAllProjects] = useState<DCProject[]>([]);
   const [adminApproval, setAdminApproval] = useState<AdminApprovalRecord | null>(null);
+  const [workerRefreshKey, setWorkerRefreshKey] = useState(0);
 
   useEffect(() => {
     return subscribeToDCProjects(setAllProjects);
@@ -381,8 +436,21 @@ export function EvalTranscriptionPanel({ activeUser, activeSection, isSuperAdmin
     if (isSuperAdmin) {
       return subscribeToOpsWorkers(setWorkers);
     }
-    return subscribeToOpsWorkersByProjects(adminApproval?.assignedProjectIds ?? [], setWorkers);
-  }, [adminApproval?.assignedProjectIds, isSuperAdmin]);
+    let cancelled = false;
+    const projectIds = adminApproval?.assignedProjectIds ?? [];
+    if (projectIds.length === 0) {
+      setWorkers([]);
+      return () => { cancelled = true; };
+    }
+    void fetchOpsWorkersByProjects(projectIds)
+      .then((records) => {
+        if (!cancelled) setWorkers(records);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkers([]);
+      });
+    return () => { cancelled = true; };
+  }, [adminApproval?.assignedProjectIds, isSuperAdmin, workerRefreshKey]);
 
   // For super admin: all projects are assignable
   const adminProjects = isSuperAdmin
@@ -410,6 +478,7 @@ export function EvalTranscriptionPanel({ activeUser, activeSection, isSuperAdmin
       activeUser={activeUser}
       adminEmail={adminEmail}
       adminApproval={adminApproval}
+      onWorkersChanged={() => setWorkerRefreshKey((key) => key + 1)}
     />
   );
 }

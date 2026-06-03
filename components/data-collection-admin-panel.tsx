@@ -32,6 +32,7 @@ import {
 } from "@/lib/firebase/admin-access";
 import {
   addWorkerToProject,
+  fetchOpsWorkersByProjects,
   removeWorkerFromProject,
   subscribeToOpsWorkersByProject,
   type OpsRole,
@@ -61,7 +62,7 @@ interface DataCollectionAdminPanelProps {
   isSuperAdmin: boolean;
 }
 
-// ─── Small shared components ──────────────────────────────────────────────────
+// â”€â”€â”€ Small shared components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SectionHeader({
   title,
@@ -151,7 +152,7 @@ function SlidePanel({
             onClick={onClose}
             className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-ink"
           >
-            ✕
+            âœ•
           </button>
         </div>
         <div className="flex-1 px-6 py-5">{children}</div>
@@ -192,16 +193,16 @@ function formatDuration(seconds: number) {
 }
 
 function formatDate(val: unknown): string {
-  if (!val) return "—";
+  if (!val) return "â€”";
   try {
     const ts = (val as { toDate?: () => Date }).toDate?.();
     return (ts ?? new Date(val as string)).toLocaleDateString();
   } catch {
-    return "—";
+    return "â€”";
   }
 }
 
-// ─── Projects section ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Projects section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function groupSessionsByProject(sessions: DCSession[]) {
   const groups = new Map<string, DCSession[]>();
@@ -230,6 +231,30 @@ function groupSessionsByParticipant(sessions: DCSession[]) {
     duration: speakerSessions.reduce((sum, session) => sum + session.duration, 0),
     lastDate: speakerSessions[0]?.createdAt,
   }));
+}
+
+function workerOwnerForProject(worker: OpsWorker, projectId: string) {
+  const owner = worker.projectAssignmentOwners?.[projectId];
+  if (owner?.adminEmail) {
+    return {
+      email: owner.adminEmail.toLowerCase(),
+      name: owner.adminName || owner.adminEmail,
+    };
+  }
+  if (worker.invitedByAdminEmail) {
+    return {
+      email: worker.invitedByAdminEmail.toLowerCase(),
+      name: worker.invitedByName || worker.invitedByAdminEmail,
+    };
+  }
+  return {
+    email: worker.invitedByEmail.toLowerCase(),
+    name: worker.invitedByName || worker.invitedByEmail || "Super admin",
+  };
+}
+
+function workerOwnedByAdmin(worker: OpsWorker, projectId: string, adminEmail: string) {
+  return workerOwnerForProject(worker, projectId).email === adminEmail.trim().toLowerCase();
 }
 
 function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
@@ -329,7 +354,7 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                     )}
                   </td>
                   <td className="px-4 py-3 text-muted">{p.participantCount}</td>
-                  <td className="px-4 py-3 text-muted">{p.deadline || "—"}</td>
+                  <td className="px-4 py-3 text-muted">{p.deadline || "â€”"}</td>
                   <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
@@ -389,7 +414,7 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
   );
 }
 
-// ─── Project Detail ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Project Detail â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ProjectDetail({
   project,
@@ -438,9 +463,21 @@ function ProjectDetail({
   useEffect(() => {
     const u1 = subscribeToDCAssignmentsByProject(project.id, setAssignments);
     const u2 = subscribeToDCSessions((s) => setSessions(s.filter((x) => x.projectId === project.id)));
-    const u4 = subscribeToOpsWorkersByProject(project.id, setWorkers);
-    return () => { u1(); u2(); u4(); };
-  }, [project.id]);
+    let cancelled = false;
+    let u4: (() => void) | undefined;
+    if (isSuperAdmin) {
+      u4 = subscribeToOpsWorkersByProject(project.id, setWorkers);
+    } else {
+      void fetchOpsWorkersByProjects([project.id])
+        .then((records) => {
+          if (!cancelled) setWorkers(records);
+        })
+        .catch(() => {
+          if (!cancelled) setWorkers([]);
+        });
+    }
+    return () => { cancelled = true; u1(); u2(); u4?.(); };
+  }, [isSuperAdmin, project.id]);
 
   useEffect(() => {
     if (!isSuperAdmin) return;
@@ -513,6 +550,7 @@ function ProjectDetail({
         activeUser.uid,
         isSuperAdmin ? "super" : "admin",
         isSuperAdmin ? undefined : (activeUser.email ?? undefined),
+        activeUser.displayName || activeUser.email || undefined,
       );
       setShowAddWorker(false);
       setWorkerEmail("");
@@ -526,7 +564,9 @@ function ProjectDetail({
   }
 
   async function handleRemoveWorker(worker: OpsWorker) {
+    if (!isSuperAdmin && !workerOwnedByAdmin(worker, project.id, activeUser.email ?? "")) return;
     await removeWorkerFromProject(worker.email, project.id);
+    setWorkers((current) => current.filter((w) => w.email !== worker.email));
   }
 
   async function handleAssign(e: FormEvent) {
@@ -559,7 +599,7 @@ function ProjectDetail({
         onClick={onBack}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-primary"
       >
-        ← Back to projects
+        â† Back to projects
       </button>
 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
@@ -597,7 +637,7 @@ function ProjectDetail({
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             { label: "Dialect", value: project.dialect },
-            { label: "Deadline", value: project.deadline || "—" },
+            { label: "Deadline", value: project.deadline || "â€”" },
             { label: "Sample rate", value: project.audioFormat.sampleRate },
             { label: "Bit depth", value: project.audioFormat.bitDepth },
           ].map((item) => (
@@ -678,18 +718,18 @@ function ProjectDetail({
           const raw = Number(s.age);
           let group = "Unknown";
           if (!isNaN(raw) && raw > 0) {
-            if (raw < 25) group = "18–24";
-            else if (raw < 35) group = "25–34";
-            else if (raw < 45) group = "35–44";
-            else if (raw < 55) group = "45–54";
-            else if (raw < 65) group = "55–64";
+            if (raw < 25) group = "18â€“24";
+            else if (raw < 35) group = "25â€“34";
+            else if (raw < 45) group = "35â€“44";
+            else if (raw < 55) group = "45â€“54";
+            else if (raw < 65) group = "55â€“64";
             else group = "65+";
           }
           acc[group] = (acc[group] ?? 0) + 1;
           return acc;
         }, {});
         const tierCounts = assignments.reduce<Record<string, number>>((acc, a) => {
-          const label = a.targetSampleRate === 48000 ? "48kHz" : a.targetSampleRate === 16000 ? "16kHz" : a.targetSampleRate === 8000 ? "8kHz" : "—";
+          const label = a.targetSampleRate === 48000 ? "48kHz" : a.targetSampleRate === 16000 ? "16kHz" : a.targetSampleRate === 8000 ? "8kHz" : "â€”";
           acc[label] = (acc[label] ?? 0) + 1;
           return acc;
         }, {});
@@ -773,9 +813,9 @@ function ProjectDetail({
                 <tbody className="divide-y divide-slate-100">
                   {assignedAdmins.map((a) => (
                     <tr key={a.email} className="group hover:bg-panelStrong/40">
-                      <td className="px-4 py-3 font-medium text-ink">{a.contactName || "—"}</td>
+                      <td className="px-4 py-3 font-medium text-ink">{a.contactName || "â€”"}</td>
                       <td className="px-4 py-3 text-muted">{a.email}</td>
-                      <td className="px-4 py-3 text-muted">{a.company || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{a.company || "â€”"}</td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -816,7 +856,7 @@ function ProjectDetail({
                       />
                       <div>
                         <p className="font-medium text-ink">{a.contactName || a.email}</p>
-                        <p className="text-[11px] text-muted">{a.email} · {a.company}</p>
+                        <p className="text-[11px] text-muted">{a.email} Â· {a.company}</p>
                       </div>
                     </label>
                   ))}
@@ -828,7 +868,7 @@ function ProjectDetail({
                 onClick={() => void handleAssignAdmin()}
                 className="inline-flex w-full items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-50"
               >
-                {assigningAdmin ? "Assigning…" : "Assign Admin"}
+                {assigningAdmin ? "Assigningâ€¦" : "Assign Admin"}
               </button>
             </div>
           </SlidePanel>
@@ -854,29 +894,38 @@ function ProjectDetail({
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                  {["Name", "Email", "Roles", "Status", ""].map((h) => (
+                  {["Name", "Email", "Roles", "Added by", "Status", ""].map((h) => (
                     <th key={h} className="px-4 py-3 font-medium">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {workers.map((w) => (
-                  <tr key={w.email} className="group hover:bg-panelStrong/40">
-                    <td className="px-4 py-3 font-medium text-ink">{w.name || "—"}</td>
-                    <td className="px-4 py-3 text-muted">{w.email}</td>
-                    <td className="px-4 py-3 text-muted capitalize">{w.roles.join(", ")}</td>
-                    <td className="px-4 py-3"><StatusBadge status={w.status} /></td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleRemoveWorker(w)}
-                        className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-700 opacity-0 group-hover:opacity-100 hover:bg-rose-50"
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {workers.map((w) => {
+                  const canManage = isSuperAdmin || workerOwnedByAdmin(w, project.id, activeUser.email ?? "");
+                  const owner = workerOwnerForProject(w, project.id);
+                  return (
+                    <tr key={w.email} className="group hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{w.name || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{w.email}</td>
+                      <td className="px-4 py-3 text-muted capitalize">{w.roles.join(", ")}</td>
+                      <td className="px-4 py-3 text-muted">{owner.name || "—"}</td>
+                      <td className="px-4 py-3"><StatusBadge status={w.status} /></td>
+                      <td className="px-4 py-3">
+                        {canManage ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveWorker(w)}
+                            className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-700 opacity-0 group-hover:opacity-100 hover:bg-rose-50"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted">View only</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -931,7 +980,7 @@ function ProjectDetail({
               {addingWorker ? (
                 <>
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Adding…
+                  Addingâ€¦
                 </>
               ) : "Add Worker"}
             </button>
@@ -955,7 +1004,7 @@ function ProjectDetail({
             <tbody className="divide-y divide-slate-100">
               {sessions.map((s) => (
                 <tr key={s.id}>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}…</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}â€¦</td>
                   <td className="px-4 py-3 text-ink">{s.speakerName || s.speakerId}</td>
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
@@ -966,7 +1015,7 @@ function ProjectDetail({
                       value={s.assignedTranscriptorEmail}
                       onChange={(e) => void updateDCSessionAssignment(s.id, e.target.value, undefined)}
                     >
-                      <option value="">— unassigned —</option>
+                      <option value="">â€” unassigned â€”</option>
                       {workers.filter((w) => w.roles.includes("transcription")).map((w) => (
                         <option key={w.email} value={w.email}>{w.name || w.email}</option>
                       ))}
@@ -978,7 +1027,7 @@ function ProjectDetail({
                       value={s.assignedQAEmail}
                       onChange={(e) => void updateDCSessionAssignment(s.id, undefined, e.target.value)}
                     >
-                      <option value="">— unassigned —</option>
+                      <option value="">â€” unassigned â€”</option>
                       {workers.filter((w) => w.roles.includes("qa")).map((w) => (
                         <option key={w.email} value={w.email}>{w.name || w.email}</option>
                       ))}
@@ -1024,7 +1073,7 @@ function ProjectDetail({
             disabled={assigning}
             className="w-full rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-60"
           >
-            {assigning ? "Adding…" : "Add Speaker to Project"}
+            {assigning ? "Addingâ€¦" : "Add Speaker to Project"}
           </button>
         </form>
       </SlidePanel>
@@ -1032,7 +1081,7 @@ function ProjectDetail({
   );
 }
 
-// ─── Speakers section ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Speakers section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
@@ -1118,11 +1167,11 @@ function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
             <tbody className="divide-y divide-slate-100">
               {visibleSpeakers.map((s) => (
                 <tr key={s.id} className="group hover:bg-panelStrong/50">
-                  <td className="px-4 py-3 font-medium text-ink">{s.name || "—"}</td>
+                  <td className="px-4 py-3 font-medium text-ink">{s.name || "â€”"}</td>
                   <td className="px-4 py-3 text-muted">{s.email}</td>
-                  <td className="px-4 py-3 text-muted">{s.dialect || "—"}</td>
-                  <td className="px-4 py-3 text-muted capitalize">{s.gender || "—"}</td>
-                  <td className="px-4 py-3 text-muted">{s.region || "—"}</td>
+                  <td className="px-4 py-3 text-muted">{s.dialect || "â€”"}</td>
+                  <td className="px-4 py-3 text-muted capitalize">{s.gender || "â€”"}</td>
+                  <td className="px-4 py-3 text-muted">{s.region || "â€”"}</td>
                   <td className="px-4 py-3 text-muted">{s.projectsCount}</td>
                   <td className="px-4 py-3 text-muted">{s.totalHours.toFixed(2)}h</td>
                   <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
@@ -1172,7 +1221,7 @@ function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
             disabled={inviting}
             className="w-full rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-60"
           >
-            {inviting ? "Inviting…" : "Send Invitation"}
+            {inviting ? "Invitingâ€¦" : "Send Invitation"}
           </button>
         </form>
       </SlidePanel>
@@ -1180,7 +1229,7 @@ function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
   );
 }
 
-// ─── Sessions section ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Sessions section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
@@ -1297,7 +1346,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                           onClick={() => setSelectedProjectId(project.id)}
                           className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                         >
-                          Open →
+                          Open â†’
                         </button>
                       </td>
                     </tr>
@@ -1320,7 +1369,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
         onClick={() => setSelectedProjectId(null)}
         className="text-sm font-medium text-muted hover:text-primary"
       >
-        ← Back to projects
+        â† Back to projects
       </button>
       <SectionHeader title={selectedProject.name} description="Participants and their recorded sessions." />
 
@@ -1331,7 +1380,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Participant", "Gender · Dialect", "Recorded", "Progress", "Status", "Assigned", ""].map((h) => (
+                {["Participant", "Gender Â· Dialect", "Recorded", "Progress", "Status", "Assigned", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -1345,11 +1394,11 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                 return (
                   <tr key={assignment.id} className="hover:bg-panelStrong/40">
                     <td className="px-4 py-3">
-                      <p className="font-medium text-ink">{speaker?.name || assignment.speakerName || "—"}</p>
+                      <p className="font-medium text-ink">{speaker?.name || assignment.speakerName || "â€”"}</p>
                       <p className="text-xs text-muted">{assignment.speakerEmail}</p>
                     </td>
                     <td className="px-4 py-3 text-xs text-muted">
-                      {[speaker?.gender, speaker?.dialect].filter(Boolean).join(" · ") || "—"}
+                      {[speaker?.gender, speaker?.dialect].filter(Boolean).join(" Â· ") || "â€”"}
                     </td>
                     <td className="px-4 py-3 text-muted">{assignmentSessions.length}</td>
                     <td className="px-4 py-3">
@@ -1376,7 +1425,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                         onClick={() => setSelectedAssignment(assignment)}
                         className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                       >
-                        Open →
+                        Open â†’
                       </button>
                     </td>
                   </tr>
@@ -1414,7 +1463,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
 
       <input
         className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-primary"
-        placeholder="Search by speaker or project…"
+        placeholder="Search by speaker or projectâ€¦"
         value={filterText}
         onChange={(e) => setFilterText(e.target.value)}
       />
@@ -1428,7 +1477,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Speaker", "Gender · Dialect", "Project", "Progress", "Status", "Assigned", ""].map((h) => (
+                {["Speaker", "Gender Â· Dialect", "Project", "Progress", "Status", "Assigned", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -1446,11 +1495,11 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                 return (
                   <tr key={a.id} className="group hover:bg-panelStrong/50">
                     <td className="px-4 py-3">
-                      <p className="font-medium text-ink">{sp?.name || a.speakerName || "—"}</p>
+                      <p className="font-medium text-ink">{sp?.name || a.speakerName || "â€”"}</p>
                       <p className="text-xs text-muted">{a.speakerEmail}</p>
                     </td>
                     <td className="px-4 py-3 text-xs text-muted">
-                      {[sp?.gender, sp?.dialect].filter(Boolean).join(" · ") || "—"}
+                      {[sp?.gender, sp?.dialect].filter(Boolean).join(" Â· ") || "â€”"}
                     </td>
                     <td className="px-4 py-3 text-muted">{a.projectName}</td>
                     <td className="px-4 py-3">
@@ -1476,7 +1525,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                         onClick={() => setSelectedAssignment(a)}
                         className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary opacity-0 hover:bg-primary/10 group-hover:opacity-100"
                       >
-                        View →
+                        View â†’
                       </button>
                     </td>
                   </tr>
@@ -1490,7 +1539,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
   );
 }
 
-// ─── Assignment Detail (Sessions) ─────────────────────────────────────────────
+// â”€â”€â”€ Assignment Detail (Sessions) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function AssignmentDetail({
   assignment, sessions, project, speaker, onBack,
@@ -1514,18 +1563,18 @@ function AssignmentDetail({
   const pct = totalPrompts > 0 ? Math.min(100, Math.round((validSessions.length / totalPrompts) * 100)) : 0;
 
   const profileFields = [
-    { label: "Gender", value: speaker?.gender || "—" },
-    { label: "Age", value: speaker?.age || "—" },
-    { label: "Dialect", value: speaker?.dialect || "—" },
-    { label: "Region", value: speaker?.region || "—" },
-    { label: "Country", value: speaker?.country || "—" },
-    { label: "Languages", value: speaker?.languages?.join(", ") || "—" },
+    { label: "Gender", value: speaker?.gender || "â€”" },
+    { label: "Age", value: speaker?.age || "â€”" },
+    { label: "Dialect", value: speaker?.dialect || "â€”" },
+    { label: "Region", value: speaker?.region || "â€”" },
+    { label: "Country", value: speaker?.country || "â€”" },
+    { label: "Languages", value: speaker?.languages?.join(", ") || "â€”" },
   ];
 
   return (
     <div className="space-y-6">
       <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-primary">
-        ← Back to sessions
+        â† Back to sessions
       </button>
 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
@@ -1571,7 +1620,7 @@ function AssignmentDetail({
           {[
             { label: "Recordings", value: String(sessions.length) },
             { label: "Tasks", value: String(tasks.length) },
-            { label: "Deadline", value: assignment.deadline || "—" },
+            { label: "Deadline", value: assignment.deadline || "â€”" },
           ].map((item) => (
             <div key={item.label} className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
               <p className="text-[11px] uppercase tracking-widest text-muted">{item.label}</p>
@@ -1629,7 +1678,7 @@ function AssignmentDetail({
           {sessions.map((s) => (
             <div key={s.id} className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm text-ink">{s.promptText || "—"}</p>
+                <p className="text-sm text-ink">{s.promptText || "â€”"}</p>
                 <StatusBadge status={s.qaStatus} />
               </div>
               {s.audioUrl && (
@@ -1646,10 +1695,11 @@ function AssignmentDetail({
   );
 }
 
-// ─── Transcription section ────────────────────────────────────────────────────
+// â”€â”€â”€ Transcription section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [adminWorkers, setAdminWorkers] = useState<OpsWorker[]>([]);
   const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(isSuperAdmin ? [] : null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null);
@@ -1677,7 +1727,31 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
     });
   }, [adminProjectIds, isSuperAdmin]);
 
-  const transcribable = sessions.filter((s) => Boolean(s.audioUrl) && s.qaStatus === "approved");
+  useEffect(() => {
+    if (isSuperAdmin || adminProjectIds == null) return;
+    let cancelled = false;
+    void fetchOpsWorkersByProjects(adminProjectIds)
+      .then((records) => {
+        if (!cancelled) setAdminWorkers(records);
+      })
+      .catch(() => {
+        if (!cancelled) setAdminWorkers([]);
+      });
+    return () => { cancelled = true; };
+  }, [adminProjectIds, isSuperAdmin]);
+
+  const adminEmail = activeUser.email ?? "";
+  const ownedTranscriptionWorkerEmails = new Set(
+    adminWorkers
+      .filter((worker) => worker.roles.includes("transcription"))
+      .filter((worker) => worker.assignedProjectIds.some((projectId) => workerOwnedByAdmin(worker, projectId, adminEmail)))
+      .map((worker) => worker.email),
+  );
+  const transcribable = sessions.filter((s) =>
+    Boolean(s.audioUrl) &&
+    s.qaStatus === "approved" &&
+    (isSuperAdmin || (Boolean(s.assignedTranscriptorEmail) && ownedTranscriptionWorkerEmails.has(s.assignedTranscriptorEmail))),
+  );
   const pending = transcribable.filter((s) => s.transcriptionStatus === "pending");
   const inProgress = transcribable.filter((s) => s.transcriptionStatus === "human-review");
   const completed = transcribable.filter((s) => s.transcriptionStatus === "completed");
@@ -1707,7 +1781,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
     { key: "in-progress" as const, label: `In Progress (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "human-review").length})` },
     { key: "completed" as const, label: `Completed (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "completed").length})` },
   ];
-  const avgWer = totalWer.length ? (totalWer.reduce((a, b) => a + b, 0) / totalWer.length).toFixed(1) : "—";
+  const avgWer = totalWer.length ? (totalWer.reduce((a, b) => a + b, 0) / totalWer.length).toFixed(1) : "â€”";
 
   async function triggerASR(sessionId: string) {
     setUpdating(sessionId);
@@ -1743,7 +1817,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
           onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
           className="text-sm font-medium text-muted hover:text-primary"
         >
-          ← Back to participants
+          â† Back to participants
         </button>
         <SectionHeader title={selectedParticipant.speakerName} description={`${selectedProject.projectName} transcription sessions.`} />
 
@@ -1787,7 +1861,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                     <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                     <td className="px-4 py-3 text-muted">{s.sampleRate / 1000}k</td>
                     <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
-                    <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "—"}</td>
+                    <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "â€”"}</td>
                     <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
                   </tr>
                 ))}
@@ -1807,7 +1881,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
           onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
           className="text-sm font-medium text-muted hover:text-primary"
         >
-          ← Back to projects
+          â† Back to projects
         </button>
         <SectionHeader title={selectedProject.projectName} description="Participants in this transcription project." />
 
@@ -1837,7 +1911,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                       <td className="px-4 py-3 text-muted">{inProgressForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{completedForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{formatDuration(participant.duration)}</td>
-                      <td className="px-4 py-3 text-muted">{transcriptors.join(", ") || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{transcriptors.join(", ") || "â€”"}</td>
                       <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
                       <td className="px-4 py-3 text-right">
                         <button
@@ -1845,7 +1919,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                           onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
                           className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                         >
-                          Open →
+                          Open â†’
                         </button>
                       </td>
                     </tr>
@@ -1867,7 +1941,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
         <MetricCard label="Pending" value={String(pending.length)} sub="Awaiting transcription" />
         <MetricCard label="Assigned" value={String(assigned.length)} sub={`${inProgress.length} in human review`} />
         <MetricCard label="Completed" value={String(completed.length)} sub="Fully transcribed" />
-        <MetricCard label="Avg WER" value={avgWer === "—" ? "—" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
+        <MetricCard label="Avg WER" value={avgWer === "â€”" ? "â€”" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
       </div>
 
       {projectGroups.length === 0 ? (
@@ -1901,7 +1975,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                         onClick={() => setSelectedProjectId(project.projectId)}
                         className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                       >
-                        Open →
+                        Open â†’
                       </button>
                     </td>
                   </tr>
@@ -1922,7 +1996,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
         <MetricCard label="Pending" value={String(pending.length)} sub="Awaiting transcription" />
         <MetricCard label="Assigned" value={String(assigned.length)} sub={`${inProgress.length} in human review`} />
         <MetricCard label="Completed" value={String(completed.length)} sub="Fully transcribed" />
-        <MetricCard label="Avg WER" value={avgWer === "—" ? "—" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
+        <MetricCard label="Avg WER" value={avgWer === "â€”" ? "â€”" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
       </div>
 
       {loading ? (
@@ -1940,13 +2014,13 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
             <tbody className="divide-y divide-slate-100">
               {transcribable.map((s) => (
                 <tr key={s.id}>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}…</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}â€¦</td>
                   <td className="px-4 py-3 text-ink">{s.projectName}</td>
                   <td className="px-4 py-3 text-muted">{s.speakerName || s.speakerId}</td>
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
-                  <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "—"}</td>
-                  <td className="px-4 py-3 text-muted">{s.werScore != null ? `${s.werScore}%` : "—"}</td>
+                  <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "â€”"}</td>
+                  <td className="px-4 py-3 text-muted">{s.werScore != null ? `${s.werScore}%` : "â€”"}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
                       {isSuperAdmin && s.transcriptionStatus === "pending" && (
@@ -1956,7 +2030,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                           onClick={() => void triggerASR(s.id)}
                           className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
                         >
-                          {updating === s.id ? "…" : "Trigger ASR"}
+                          {updating === s.id ? "â€¦" : "Trigger ASR"}
                         </button>
                       )}
                       {isSuperAdmin && (s.transcriptionStatus === "asr-done" || s.transcriptionStatus === "human-review") && (
@@ -1966,7 +2040,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                           onClick={() => void markComplete(s.id)}
                           className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
                         >
-                          {updating === s.id ? "…" : "Mark Complete"}
+                          {updating === s.id ? "â€¦" : "Mark Complete"}
                         </button>
                       )}
                     </div>
@@ -1986,10 +2060,11 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
   );
 }
 
-// ─── QA Review section ────────────────────────────────────────────────────────
+// â”€â”€â”€ QA Review section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
+  const [adminWorkers, setAdminWorkers] = useState<OpsWorker[]>([]);
   const [adminProjectIds, setAdminProjectIds] = useState<string[] | null>(isSuperAdmin ? [] : null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null);
@@ -2018,7 +2093,30 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
     });
   }, [adminProjectIds, isSuperAdmin]);
 
-  const allSessions = sessions.filter((s) => Boolean(s.audioUrl));
+  useEffect(() => {
+    if (isSuperAdmin || adminProjectIds == null) return;
+    let cancelled = false;
+    void fetchOpsWorkersByProjects(adminProjectIds)
+      .then((records) => {
+        if (!cancelled) setAdminWorkers(records);
+      })
+      .catch(() => {
+        if (!cancelled) setAdminWorkers([]);
+      });
+    return () => { cancelled = true; };
+  }, [adminProjectIds, isSuperAdmin]);
+
+  const adminEmail = activeUser.email ?? "";
+  const ownedQAWorkerEmails = new Set(
+    adminWorkers
+      .filter((worker) => worker.roles.includes("qa"))
+      .filter((worker) => worker.assignedProjectIds.some((projectId) => workerOwnedByAdmin(worker, projectId, adminEmail)))
+      .map((worker) => worker.email),
+  );
+  const allSessions = sessions.filter((s) =>
+    Boolean(s.audioUrl) &&
+    (isSuperAdmin || (Boolean(s.assignedQAEmail) && ownedQAWorkerEmails.has(s.assignedQAEmail))),
+  );
   const assigned = allSessions.filter((s) => Boolean(s.assignedQAEmail));
   const approved = allSessions.filter((s) => s.qaStatus === "approved");
   const rejected = allSessions.filter((s) => s.qaStatus === "rejected");
@@ -2074,7 +2172,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
           onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
           className="text-sm font-medium text-muted hover:text-primary"
         >
-          ← Back to participants
+          â† Back to participants
         </button>
         <SectionHeader title={selectedParticipant.speakerName} description={`${selectedProject.projectName} QA sessions.`} />
 
@@ -2116,7 +2214,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                   <tr key={s.id} className="hover:bg-panelStrong/40">
                     <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
                     <td className="max-w-[220px] px-4 py-3 text-muted">
-                      <span className="block truncate">{s.promptText ?? "—"}</span>
+                      <span className="block truncate">{s.promptText ?? "â€”"}</span>
                       {s.submissionCount > 0 && (
                         <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                           Resubmission #{s.submissionCount}
@@ -2125,8 +2223,8 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                     </td>
                     <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                     <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
-                    <td className="px-4 py-3 text-muted">{s.assignedQAEmail || "—"}</td>
-                    <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "—"}</td>
+                    <td className="px-4 py-3 text-muted">{s.assignedQAEmail || "â€”"}</td>
+                    <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "â€”"}</td>
                     <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
                   </tr>
                 ))}
@@ -2146,7 +2244,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
           onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
           className="text-sm font-medium text-muted hover:text-primary"
         >
-          ← Back to projects
+          â† Back to projects
         </button>
         <SectionHeader title={selectedProject.projectName} description="Participants in this QA project." />
 
@@ -2168,7 +2266,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                   const approvedForParticipant = participant.sessions.filter((s) => s.qaStatus === "approved").length;
                   const rejectedForParticipant = participant.sessions.filter((s) => s.qaStatus === "rejected").length;
                   const scored = participant.sessions.filter((s) => s.qaScore != null).map((s) => s.qaScore as number);
-                  const avgScore = scored.length ? (scored.reduce((sum, score) => sum + score, 0) / scored.length).toFixed(1) : "—";
+                  const avgScore = scored.length ? (scored.reduce((sum, score) => sum + score, 0) / scored.length).toFixed(1) : "â€”";
                   const qaWorkers = Array.from(new Set(participant.sessions.map((s) => s.assignedQAEmail).filter(Boolean)));
                   return (
                     <tr key={participant.speakerId} className="hover:bg-panelStrong/40">
@@ -2177,8 +2275,8 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                       <td className="px-4 py-3 text-muted">{toReviewForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{approvedForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{rejectedForParticipant}</td>
-                      <td className="px-4 py-3 text-muted">{avgScore === "—" ? "—" : `${avgScore}/5`}</td>
-                      <td className="px-4 py-3 text-muted">{qaWorkers.join(", ") || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{avgScore === "â€”" ? "â€”" : `${avgScore}/5`}</td>
+                      <td className="px-4 py-3 text-muted">{qaWorkers.join(", ") || "â€”"}</td>
                       <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
                       <td className="px-4 py-3 text-right">
                         <button
@@ -2186,7 +2284,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                           onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
                           className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                         >
-                          Open →
+                          Open â†’
                         </button>
                       </td>
                     </tr>
@@ -2242,7 +2340,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                         onClick={() => setSelectedProjectId(project.projectId)}
                         className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
                       >
-                        Open →
+                        Open â†’
                       </button>
                     </td>
                   </tr>
@@ -2498,7 +2596,7 @@ function DeliverySection({ activeUser: _user }: { activeUser: User }) {
                   <tr key={project.id} className="hover:bg-panelStrong/40">
                     <td className="px-4 py-3">
                       <p className="font-semibold text-ink">{project.name}</p>
-                      <p className="text-xs text-muted">{[project.client, project.dialect].filter(Boolean).join(" · ") || "No client set"}</p>
+                      <p className="text-xs text-muted">{[project.client, project.dialect].filter(Boolean).join(" Â· ") || "No client set"}</p>
                     </td>
                     <td className="px-4 py-3 text-muted">{approvedSessions.length}</td>
                     <td className="px-4 py-3 text-muted">{pendingSessions.length}</td>
@@ -2531,7 +2629,7 @@ function DeliverySection({ activeUser: _user }: { activeUser: User }) {
 
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Main export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function DataCollectionAdminPanel({ activeUser, activeSection, isSuperAdmin }: DataCollectionAdminPanelProps) {
   return (

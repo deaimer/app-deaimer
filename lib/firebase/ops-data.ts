@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   onSnapshot,
@@ -21,11 +22,13 @@ export interface OpsWorker {
   name: string;
   roles: OpsRole[];
   assignedProjectIds: string[];
+  projectAssignmentOwners: Record<string, { adminEmail: string; adminName: string }>;
   status: "active" | "paused";
   invitedByEmail: string;
   invitedByUid: string;
   invitedByRole: OpsInvitedByRole;
   invitedByAdminEmail?: string;
+  invitedByName?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -37,6 +40,19 @@ function db() {
 }
 
 function mapWorker(data: DocumentData, id: string): OpsWorker {
+  const rawOwners = data.projectAssignmentOwners && typeof data.projectAssignmentOwners === "object"
+    ? data.projectAssignmentOwners as Record<string, unknown>
+    : {};
+  const projectAssignmentOwners = Object.fromEntries(
+    Object.entries(rawOwners).map(([projectId, owner]) => {
+      const value = owner && typeof owner === "object" ? owner as Record<string, unknown> : {};
+      return [projectId, {
+        adminEmail: String(value.adminEmail ?? ""),
+        adminName: String(value.adminName ?? ""),
+      }];
+    }),
+  );
+
   return {
     email: String(data.email ?? id),
     name: String(data.name ?? ""),
@@ -48,11 +64,13 @@ function mapWorker(data: DocumentData, id: string): OpsWorker {
     assignedProjectIds: Array.isArray(data.assignedProjectIds)
       ? data.assignedProjectIds.map(String)
       : [],
+    projectAssignmentOwners,
     status: data.status === "paused" ? "paused" : "active",
     invitedByEmail: String(data.invitedByEmail ?? ""),
     invitedByUid: String(data.invitedByUid ?? ""),
     invitedByRole: data.invitedByRole === "admin" ? "admin" : "super",
     invitedByAdminEmail: data.invitedByAdminEmail ? String(data.invitedByAdminEmail) : undefined,
+    invitedByName: data.invitedByName ? String(data.invitedByName) : undefined,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -68,8 +86,18 @@ export async function saveOpsWorker(
   invitedByRole: OpsInvitedByRole = "super",
   invitedByAdminEmail?: string,
   isNewWorker?: boolean,
+  inviterName?: string,
+  ownedProjectIds?: string[],
 ): Promise<void> {
   const normalized = email.trim().toLowerCase();
+  const normalizedAdminEmail = invitedByAdminEmail?.trim().toLowerCase();
+  const ownerProjectIds = Array.from(new Set((ownedProjectIds ?? assignedProjectIds).filter(Boolean)));
+  const projectAssignmentOwners = normalizedAdminEmail
+    ? Object.fromEntries(ownerProjectIds.map((projectId) => [projectId, {
+        adminEmail: normalizedAdminEmail,
+        adminName: inviterName?.trim() || normalizedAdminEmail,
+      }]))
+    : {};
   const ref = doc(db(), "opsWorkers", normalized);
   await setDoc(
     ref,
@@ -82,7 +110,9 @@ export async function saveOpsWorker(
       invitedByEmail: inviterEmail,
       invitedByUid: inviterUid,
       invitedByRole,
-      ...(invitedByAdminEmail ? { invitedByAdminEmail: invitedByAdminEmail.trim().toLowerCase() } : {}),
+      ...(normalizedAdminEmail ? { invitedByAdminEmail: normalizedAdminEmail } : {}),
+      ...(inviterName?.trim() ? { invitedByName: inviterName.trim() } : {}),
+      ...(Object.keys(projectAssignmentOwners).length > 0 ? { projectAssignmentOwners } : {}),
       updatedAt: serverTimestamp(),
       ...(isNewWorker ? { createdAt: serverTimestamp() } : {}),
     },
@@ -195,6 +225,22 @@ export function subscribeToOpsWorkersByProjects(
   };
 }
 
+export async function fetchOpsWorkersByProjects(projectIds: string[]): Promise<OpsWorker[]> {
+  const ids = Array.from(new Set(projectIds.filter(Boolean)));
+  if (ids.length === 0) return [];
+
+  const token = await getFirebaseClientServices().auth.currentUser?.getIdToken();
+  if (!token) throw new Error("Not authenticated.");
+
+  const params = new URLSearchParams({ projectIds: ids.join(",") });
+  const response = await fetch(`/api/ops/workers?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = await response.json().catch(() => ({})) as { workers?: OpsWorker[]; error?: string };
+  if (!response.ok) throw new Error(payload.error ?? "Could not load workers.");
+  return payload.workers ?? [];
+}
+
 export async function addWorkerToProject(
   email: string,
   name: string,
@@ -204,8 +250,18 @@ export async function addWorkerToProject(
   inviterUid: string,
   invitedByRole: OpsInvitedByRole,
   invitedByAdminEmail?: string,
+  inviterName?: string,
 ): Promise<void> {
   const normalized = email.trim().toLowerCase();
+  const normalizedAdminEmail = invitedByAdminEmail?.trim().toLowerCase();
+  const ownerPayload = normalizedAdminEmail
+    ? {
+        [`projectAssignmentOwners.${projectId}`]: {
+          adminEmail: normalizedAdminEmail,
+          adminName: inviterName?.trim() || normalizedAdminEmail,
+        },
+      }
+    : {};
   const ref = doc(db(), "opsWorkers", normalized);
   const existing = await getDoc(ref);
 
@@ -216,6 +272,7 @@ export async function addWorkerToProject(
     await updateDoc(ref, {
       roles: mergedRoles,
       assignedProjectIds: Array.from(new Set([...existingProjects, projectId])),
+      ...ownerPayload,
       updatedAt: serverTimestamp(),
     });
   } else {
@@ -228,7 +285,20 @@ export async function addWorkerToProject(
       invitedByEmail: inviterEmail,
       invitedByUid: inviterUid,
       invitedByRole,
-      ...(invitedByAdminEmail ? { invitedByAdminEmail: invitedByAdminEmail.trim().toLowerCase() } : {}),
+      ...(normalizedAdminEmail ? { invitedByAdminEmail: normalizedAdminEmail } : {}),
+      ...(inviterName?.trim() ? { invitedByName: inviterName.trim() } : {}),
+      ...(
+        normalizedAdminEmail
+          ? {
+              projectAssignmentOwners: {
+                [projectId]: {
+                  adminEmail: normalizedAdminEmail,
+                  adminName: inviterName?.trim() || normalizedAdminEmail,
+                },
+              },
+            }
+          : {}
+      ),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -243,6 +313,7 @@ export async function removeWorkerFromProject(email: string, projectId: string):
   const currentProjects: string[] = existing.data().assignedProjectIds ?? [];
   await updateDoc(ref, {
     assignedProjectIds: currentProjects.filter((id) => id !== projectId),
+    [`projectAssignmentOwners.${projectId}`]: deleteField(),
     updatedAt: serverTimestamp(),
   });
 }
