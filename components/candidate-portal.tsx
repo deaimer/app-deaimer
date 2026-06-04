@@ -4033,6 +4033,47 @@ export function CandidatePortal({
                   );
                 }
 
+                // Google Form opened — full-page confirmation with reopen + back
+                if (googleFormOpened && crowdApplyPost.googleFormUrl) {
+                  return (
+                    <div className="border-t border-slate-100 pt-5">
+                      <div className="rounded-[1.2rem] border border-sky-200 bg-sky-50 px-6 py-8 text-center">
+                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-sky-100">
+                          <svg className="h-6 w-6 text-sky-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            <polyline points="15 3 21 3 21 9" />
+                            <line x1="10" y1="14" x2="21" y2="3" />
+                          </svg>
+                        </div>
+                        <p className="text-base font-semibold text-sky-900">Google Form opened!</p>
+                        <p className="mt-1.5 text-sm leading-6 text-sky-700">
+                          Complete the form in the new tab to submit your application.
+                        </p>
+                      </div>
+                      <div className="mt-5 flex flex-wrap items-center gap-3">
+                        <Link
+                          href="/candidates/crowd-work"
+                          className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+                        >
+                          Back to Crowd Work
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => void submitCrowdApply()}
+                          disabled={isSubmittingCrowdApply}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:bg-panelStrong disabled:opacity-60"
+                        >
+                          {isSubmittingCrowdApply ? "Opening…" : "Reopen form"}
+                          <svg className="h-3.5 w-3.5 text-muted" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" />
+                            <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
                 // No-form: show success state (Firestore will flip isApplyLocked shortly after)
                 if (crowdApplyDone && !crowdApplyPost.googleFormUrl) {
                   return (
@@ -4064,15 +4105,6 @@ export function CandidatePortal({
                           : "Click below to confirm your application for this task."}
                       </p>
                     )}
-                    {/* "Form opened" info banner — shown after first click, button stays alive */}
-                    {googleFormOpened && crowdApplyPost.googleFormUrl ? (
-                      <div className="rounded-[1.1rem] border border-sky-200 bg-sky-50 px-4 py-4">
-                        <p className="text-sm font-semibold text-sky-900">Google Form opened!</p>
-                        <p className="mt-1 text-xs leading-5 text-sky-700">
-                          Complete the form in the new tab to submit your application. You can click the button below to reopen the form if needed.
-                        </p>
-                      </div>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => void submitCrowdApply()}
@@ -4086,7 +4118,7 @@ export function CandidatePortal({
                         </>
                       ) : crowdApplyPost.googleFormUrl ? (
                         <>
-                          <span>{googleFormOpened ? "Reopen Google Form" : "Apply — opens Google Form"}</span>
+                          <span>Apply — opens Google Form</span>
                           <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                             <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" />
                             <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" />
