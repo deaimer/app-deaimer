@@ -1002,7 +1002,7 @@ function CandidateApplicationDetailCard({
 
 const crowdStatusRowBadge: Record<string, string> = {
   viewed: "bg-slate-100 text-slate-500",
-  applied: "bg-amber-100 text-amber-800",
+  applied: "bg-emerald-100 text-emerald-800",
   "under-review": "bg-sky-100 text-sky-800",
   approved: "bg-emerald-100 text-emerald-800",
   rejected: "bg-rose-100 text-rose-700",
@@ -1043,8 +1043,8 @@ function CandidateCrowdWorkRow({
           <div className="flex items-start justify-between gap-2">
             <p className="text-sm font-semibold text-ink">{post.title}</p>
             {status ? (
-              <span className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${crowdStatusRowBadge[status] ?? "bg-slate-100 text-slate-500"}`}>
-                {crowdStatusRowLabel[status] ?? status}
+              <span className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${status === "viewed" ? crowdStatusRowBadge.viewed : crowdStatusRowBadge.applied}`}>
+                {status === "viewed" ? "Viewed" : "Applied"}
               </span>
             ) : null}
           </div>
@@ -1136,8 +1136,8 @@ function CandidateCrowdWorkDetailCard({
       {/* Apply / status — always first */}
       <div className="flex flex-wrap items-center gap-2">
         {status ? (
-          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${crowdDetailStatusBadge[status] ?? crowdDetailStatusBadge.viewed}`}>
-            {crowdDetailStatusLabel[status] ?? status}
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${status === "viewed" ? "border-slate-200 bg-slate-50 text-slate-600" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+            {status === "viewed" ? "Viewed" : "Applied"}
           </span>
         ) : null}
         {isLocked ? (
@@ -1572,6 +1572,7 @@ export function CandidatePortal({
   const crowdWorkFiltersScrollRef = useRef<HTMLDivElement | null>(null);
   const [isSubmittingCrowdApply, setIsSubmittingCrowdApply] = useState(false);
   const [crowdApplyDone, setCrowdApplyDone] = useState(false);
+  const [googleFormOpened, setGoogleFormOpened] = useState(false);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [emailMode, setEmailMode] = useState<EmailMode>("signup");
   const [emailForm, setEmailForm] = useState(emptyEmailForm);
@@ -2615,20 +2616,32 @@ export function CandidatePortal({
     try {
       if (hasForm) {
         window.open(crowdApplyPost.googleFormUrl, "_blank", "noopener,noreferrer");
+        await applyCrowdWork(
+          crowdApplyPost.id,
+          crowdApplyPost.postId,
+          crowdApplyPost.title,
+          activeUser.uid,
+          profile?.fullName?.trim() || activeUser.displayName || activeUser.email || "",
+          activeUser.email ?? "",
+          profile ? `${profile.phoneCountryCode ?? ""}${profile.phoneNumber ?? ""}`.trim() : "",
+          "viewed",
+        );
+        setGoogleFormOpened(true);
+      } else {
+        await applyCrowdWork(
+          crowdApplyPost.id,
+          crowdApplyPost.postId,
+          crowdApplyPost.title,
+          activeUser.uid,
+          profile?.fullName?.trim() || activeUser.displayName || activeUser.email || "",
+          activeUser.email ?? "",
+          profile ? `${profile.phoneCountryCode ?? ""}${profile.phoneNumber ?? ""}`.trim() : "",
+          "applied",
+        );
+        setCrowdApplyDone(true);
       }
-      await applyCrowdWork(
-        crowdApplyPost.id,
-        crowdApplyPost.postId,
-        crowdApplyPost.title,
-        activeUser.uid,
-        profile?.fullName?.trim() || activeUser.displayName || activeUser.email || "",
-        activeUser.email ?? "",
-        profile ? `${profile.phoneCountryCode ?? ""}${profile.phoneNumber ?? ""}`.trim() : "",
-        "applied",
-      );
-      setCrowdApplyDone(true);
     } catch {
-      setCrowdApplyDone(true);
+      if (hasForm) setGoogleFormOpened(true); else setCrowdApplyDone(true);
     } finally {
       setIsSubmittingCrowdApply(false);
     }
@@ -4020,20 +4033,14 @@ export function CandidatePortal({
                   );
                 }
 
-                if (crowdApplyDone) {
+                // No-form: show success state (Firestore will flip isApplyLocked shortly after)
+                if (crowdApplyDone && !crowdApplyPost.googleFormUrl) {
                   return (
                     <div className="border-t border-slate-100 pt-5">
-                      {crowdApplyPost.googleFormUrl ? (
-                        <div className="rounded-[1.2rem] border border-sky-200 bg-sky-50 px-5 py-6 text-center">
-                          <p className="text-base font-semibold text-sky-900">Google Form opened!</p>
-                          <p className="mt-1.5 text-sm leading-6 text-sky-700">Complete the form in the new tab to submit your application.</p>
-                        </div>
-                      ) : (
-                        <div className="rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-5 py-6 text-center">
-                          <p className="text-base font-semibold text-emerald-900">Application submitted!</p>
-                          <p className="mt-1.5 text-sm leading-6 text-emerald-700">We will review your application and be in touch.</p>
-                        </div>
-                      )}
+                      <div className="rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-5 py-6 text-center">
+                        <p className="text-base font-semibold text-emerald-900">Application submitted!</p>
+                        <p className="mt-1.5 text-sm leading-6 text-emerald-700">We will review your application and be in touch.</p>
+                      </div>
                       <div className="mt-5">
                         <Link href="/candidates/crowd-work" className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong">
                           Back to Crowd Work
@@ -4044,17 +4051,28 @@ export function CandidatePortal({
                 }
 
                 return (
-                  <div className="space-y-6">
+                  <div className="space-y-5 border-t border-slate-100 pt-5">
                     {crowdApplyPost.requirements ? (
-                      <div className="border-t border-slate-100 pt-5">
+                      <div>
                         <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-muted/60">Instructions</p>
                         <FormattedJobDescription content={crowdApplyPost.requirements} />
                       </div>
                     ) : (
-                      <p className="border-t border-slate-100 pt-5 text-sm leading-6 text-muted">
-                        Click below to confirm your application for this task.
+                      <p className="text-sm leading-6 text-muted">
+                        {crowdApplyPost.googleFormUrl
+                          ? "Click below to open the application form in a new tab."
+                          : "Click below to confirm your application for this task."}
                       </p>
                     )}
+                    {/* "Form opened" info banner — shown after first click, button stays alive */}
+                    {googleFormOpened && crowdApplyPost.googleFormUrl ? (
+                      <div className="rounded-[1.1rem] border border-sky-200 bg-sky-50 px-4 py-4">
+                        <p className="text-sm font-semibold text-sky-900">Google Form opened!</p>
+                        <p className="mt-1 text-xs leading-5 text-sky-700">
+                          Complete the form in the new tab to submit your application. You can click the button below to reopen the form if needed.
+                        </p>
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => void submitCrowdApply()}
@@ -4068,7 +4086,7 @@ export function CandidatePortal({
                         </>
                       ) : crowdApplyPost.googleFormUrl ? (
                         <>
-                          <span>Apply — opens Google Form</span>
+                          <span>{googleFormOpened ? "Reopen Google Form" : "Apply — opens Google Form"}</span>
                           <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                             <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" />
                             <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" />

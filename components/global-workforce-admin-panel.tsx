@@ -4317,7 +4317,7 @@ export function GlobalWorkforceAdminPanel({
     return (
       <CrowdApplicationsSection
         activeUser={activeUser}
-        canManage={canManageJobs}
+        canManage={true}
         isSuperAdmin={isSuperAdmin}
       />
     );
