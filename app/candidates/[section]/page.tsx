@@ -5,6 +5,7 @@ const candidateSectionConfig = {
   home: { view: "home" as const },
   applications: { view: "applications" as const },
   "saved-roles": { view: "saved-roles" as const },
+  "crowd-work": { view: "crowd-work" as const },
   settings: { view: "settings" as const },
 };
 

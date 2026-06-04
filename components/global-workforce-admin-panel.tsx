@@ -14,6 +14,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { User } from "firebase/auth";
 import { FormattedJobDescription } from "@/components/formatted-job-description";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { CrowdProjectsSection } from "@/components/crowd-projects-section";
+import { CrowdApplicationsSection } from "@/components/crowd-applications-section";
 import { mergeHtmlContinuationParagraphs } from "@/lib/html-content";
 import { countryOptions } from "@/lib/candidates/portal-data";
 import {
@@ -69,6 +71,8 @@ const jobPayRateRangeOptions: { value: string; label: string; min: number; max: 
 export type GlobalWorkforceAdminSection =
   | "dashboard"
   | "job-posts"
+  | "crowd-projects"
+  | "crowd"
   | "candidates"
   | "signups"
   | "interviews"
@@ -1892,6 +1896,14 @@ function CandidateApplicationDrawer({
             phoneNumber={application.applicantPhoneNumber}
             alwaysVisible
           />
+          {application.applicantEmail ? (
+            <a
+              href={`mailto:${application.applicantEmail}`}
+              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-900 transition hover:bg-sky-100"
+            >
+              Email
+            </a>
+          ) : null}
           {application.status === "viewed" && canManageStatuses ? (
             <button
               type="button"
@@ -4293,6 +4305,20 @@ export function GlobalWorkforceAdminPanel({
         partners={partners}
         routeBase={routeBase}
         canManageJobs={canManageJobs}
+      />
+    );
+  }
+
+  if (activeSection === "crowd-projects") {
+    return <CrowdProjectsSection activeUser={activeUser} canManage={canManageJobs} />;
+  }
+
+  if (activeSection === "crowd") {
+    return (
+      <CrowdApplicationsSection
+        activeUser={activeUser}
+        canManage={canManageJobs}
+        isSuperAdmin={isSuperAdmin}
       />
     );
   }

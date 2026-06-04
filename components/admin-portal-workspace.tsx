@@ -51,6 +51,7 @@ import {
   EvalTranscriptionPanel,
   type EvalTranscriptionSection,
 } from "@/components/eval-transcription-panel";
+import { CrowdWorkAdminPanel } from "@/components/crowd-work-admin-panel";
 
 const fieldClassName =
   "w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary";
@@ -613,7 +614,7 @@ export function AdminPortalWorkspace({
     : null;
   const selectedGlobalSection =
     selectedServiceSlug === "global-managed-workforce"
-      ? ((["job-posts", "candidates", "commissions"].includes(
+      ? ((["job-posts", "crowd-projects", "crowd", "candidates", "commissions"].includes(
             requestedSection ?? "",
           )
             ? requestedSection
@@ -2591,12 +2592,20 @@ export function AdminPortalWorkspace({
               />
             ) : null}
 
+            {selectedServiceSlug === "crowd-work" ? (
+              <CrowdWorkAdminPanel
+                activeUser={activeUser}
+                isSuperAdmin={isSuperAdminEmail(activeUser.email)}
+              />
+            ) : null}
+
             {selectedServiceSlug &&
             selectedServiceSlug !== "profile" &&
             selectedServiceSlug !== "requests" &&
             selectedServiceSlug !== "global-managed-workforce" &&
             selectedServiceSlug !== "data-collection-sourcing" &&
-            selectedServiceSlug !== "evaluation-transcription"
+            selectedServiceSlug !== "evaluation-transcription" &&
+            selectedServiceSlug !== "crowd-work"
               ? renderPlaceholderService()
               : null}
         </div>

@@ -137,6 +137,7 @@ export interface CandidateProfileDraft {
   preferredWorkType: string;
   preferredJobType: string;
   openToRelocation: boolean;
+  openToCrowdWork: boolean;
   // Documents
   profileResume: CandidateProfileResume | null;
 }
@@ -266,6 +267,7 @@ function mapCandidateProfile(uid: string, data: DocumentData): CandidateProfile 
     preferredWorkType: String(data.preferredWorkType ?? ""),
     preferredJobType: String(data.preferredJobType ?? ""),
     openToRelocation: Boolean(data.openToRelocation ?? false),
+    openToCrowdWork: data.openToCrowdWork === false ? false : true,
     // Documents
     profileResume: mapProfileResume(data.profileResume),
     // Meta
@@ -340,6 +342,7 @@ export function createCandidateProfileDraft(user: User): CandidateProfileDraft {
     preferredWorkType: "",
     preferredJobType: "",
     openToRelocation: false,
+    openToCrowdWork: true,
     profileResume: null,
   };
 }
@@ -430,6 +433,7 @@ export async function saveCandidateProfile(
       preferredWorkType: draft.preferredWorkType.trim(),
       preferredJobType: draft.preferredJobType.trim(),
       openToRelocation: draft.openToRelocation,
+      openToCrowdWork: draft.openToCrowdWork,
       // Documents
       profileResume: draft.profileResume ?? null,
       // Meta

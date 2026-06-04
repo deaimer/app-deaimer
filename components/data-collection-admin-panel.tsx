@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { User } from "firebase/auth";
 import {
@@ -152,7 +153,7 @@ function SlidePanel({
             onClick={onClose}
             className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-ink"
           >
-            âœ•
+            <X className="h-4 w-4" />
           </button>
         </div>
         <div className="flex-1 px-6 py-5">{children}</div>
@@ -193,12 +194,12 @@ function formatDuration(seconds: number) {
 }
 
 function formatDate(val: unknown): string {
-  if (!val) return "â€”";
+  if (!val) return "—";
   try {
     const ts = (val as { toDate?: () => Date }).toDate?.();
     return (ts ?? new Date(val as string)).toLocaleDateString();
   } catch {
-    return "â€”";
+    return "—";
   }
 }
 
@@ -354,7 +355,7 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                     )}
                   </td>
                   <td className="px-4 py-3 text-muted">{p.participantCount}</td>
-                  <td className="px-4 py-3 text-muted">{p.deadline || "â€”"}</td>
+                  <td className="px-4 py-3 text-muted">{p.deadline || "—"}</td>
                   <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
@@ -597,9 +598,10 @@ function ProjectDetail({
       <button
         type="button"
         onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-primary"
+        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
       >
-        â† Back to projects
+        <ArrowLeft className="h-4 w-4" />
+        Back to projects
       </button>
 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
@@ -637,7 +639,7 @@ function ProjectDetail({
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             { label: "Dialect", value: project.dialect },
-            { label: "Deadline", value: project.deadline || "â€”" },
+            { label: "Deadline", value: project.deadline || "—" },
             { label: "Sample rate", value: project.audioFormat.sampleRate },
             { label: "Bit depth", value: project.audioFormat.bitDepth },
           ].map((item) => (
@@ -729,7 +731,7 @@ function ProjectDetail({
           return acc;
         }, {});
         const tierCounts = assignments.reduce<Record<string, number>>((acc, a) => {
-          const label = a.targetSampleRate === 48000 ? "48kHz" : a.targetSampleRate === 16000 ? "16kHz" : a.targetSampleRate === 8000 ? "8kHz" : "â€”";
+          const label = a.targetSampleRate === 48000 ? "48kHz" : a.targetSampleRate === 16000 ? "16kHz" : a.targetSampleRate === 8000 ? "8kHz" : "—";
           acc[label] = (acc[label] ?? 0) + 1;
           return acc;
         }, {});
@@ -813,9 +815,9 @@ function ProjectDetail({
                 <tbody className="divide-y divide-slate-100">
                   {assignedAdmins.map((a) => (
                     <tr key={a.email} className="group hover:bg-panelStrong/40">
-                      <td className="px-4 py-3 font-medium text-ink">{a.contactName || "â€”"}</td>
+                      <td className="px-4 py-3 font-medium text-ink">{a.contactName || "—"}</td>
                       <td className="px-4 py-3 text-muted">{a.email}</td>
-                      <td className="px-4 py-3 text-muted">{a.company || "â€”"}</td>
+                      <td className="px-4 py-3 text-muted">{a.company || "—"}</td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -856,7 +858,7 @@ function ProjectDetail({
                       />
                       <div>
                         <p className="font-medium text-ink">{a.contactName || a.email}</p>
-                        <p className="text-[11px] text-muted">{a.email} Â· {a.company}</p>
+                        <p className="text-[11px] text-muted">{a.email} ·{a.company}</p>
                       </div>
                     </label>
                   ))}
@@ -868,7 +870,7 @@ function ProjectDetail({
                 onClick={() => void handleAssignAdmin()}
                 className="inline-flex w-full items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-50"
               >
-                {assigningAdmin ? "Assigningâ€¦" : "Assign Admin"}
+                {assigningAdmin ? "Assigning…" : "Assign Admin"}
               </button>
             </div>
           </SlidePanel>
@@ -980,7 +982,7 @@ function ProjectDetail({
               {addingWorker ? (
                 <>
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Addingâ€¦
+                  Adding…
                 </>
               ) : "Add Worker"}
             </button>
@@ -1004,7 +1006,7 @@ function ProjectDetail({
             <tbody className="divide-y divide-slate-100">
               {sessions.map((s) => (
                 <tr key={s.id}>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}â€¦</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}…</td>
                   <td className="px-4 py-3 text-ink">{s.speakerName || s.speakerId}</td>
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
@@ -1015,7 +1017,7 @@ function ProjectDetail({
                       value={s.assignedTranscriptorEmail}
                       onChange={(e) => void updateDCSessionAssignment(s.id, e.target.value, undefined)}
                     >
-                      <option value="">â€” unassigned â€”</option>
+                      <option value="">— unassigned —</option>
                       {workers.filter((w) => w.roles.includes("transcription")).map((w) => (
                         <option key={w.email} value={w.email}>{w.name || w.email}</option>
                       ))}
@@ -1027,7 +1029,7 @@ function ProjectDetail({
                       value={s.assignedQAEmail}
                       onChange={(e) => void updateDCSessionAssignment(s.id, undefined, e.target.value)}
                     >
-                      <option value="">â€” unassigned â€”</option>
+                      <option value="">— unassigned —</option>
                       {workers.filter((w) => w.roles.includes("qa")).map((w) => (
                         <option key={w.email} value={w.email}>{w.name || w.email}</option>
                       ))}
@@ -1073,7 +1075,7 @@ function ProjectDetail({
             disabled={assigning}
             className="w-full rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-60"
           >
-            {assigning ? "Addingâ€¦" : "Add Speaker to Project"}
+            {assigning ? "Adding…" : "Add Speaker to Project"}
           </button>
         </form>
       </SlidePanel>
@@ -1167,11 +1169,11 @@ function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
             <tbody className="divide-y divide-slate-100">
               {visibleSpeakers.map((s) => (
                 <tr key={s.id} className="group hover:bg-panelStrong/50">
-                  <td className="px-4 py-3 font-medium text-ink">{s.name || "â€”"}</td>
+                  <td className="px-4 py-3 font-medium text-ink">{s.name || "—"}</td>
                   <td className="px-4 py-3 text-muted">{s.email}</td>
-                  <td className="px-4 py-3 text-muted">{s.dialect || "â€”"}</td>
-                  <td className="px-4 py-3 text-muted capitalize">{s.gender || "â€”"}</td>
-                  <td className="px-4 py-3 text-muted">{s.region || "â€”"}</td>
+                  <td className="px-4 py-3 text-muted">{s.dialect || "—"}</td>
+                  <td className="px-4 py-3 text-muted capitalize">{s.gender || "—"}</td>
+                  <td className="px-4 py-3 text-muted">{s.region || "—"}</td>
                   <td className="px-4 py-3 text-muted">{s.projectsCount}</td>
                   <td className="px-4 py-3 text-muted">{s.totalHours.toFixed(2)}h</td>
                   <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
@@ -1221,7 +1223,7 @@ function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
             disabled={inviting}
             className="w-full rounded-full bg-primary py-3 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-60"
           >
-            {inviting ? "Invitingâ€¦" : "Send Invitation"}
+            {inviting ? "Inviting…" : "Send Invitation"}
           </button>
         </form>
       </SlidePanel>
@@ -1344,9 +1346,9 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                         <button
                           type="button"
                           onClick={() => setSelectedProjectId(project.id)}
-                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white active:scale-95"
                         >
-                          Open â†’
+                          Open <ArrowRight className="h-3.5 w-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -1367,9 +1369,10 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
       <button
         type="button"
         onClick={() => setSelectedProjectId(null)}
-        className="text-sm font-medium text-muted hover:text-primary"
+        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
       >
-        â† Back to projects
+        <ArrowLeft className="h-4 w-4" />
+        Back to projects
       </button>
       <SectionHeader title={selectedProject.name} description="Participants and their recorded sessions." />
 
@@ -1380,7 +1383,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Participant", "Gender Â· Dialect", "Recorded", "Progress", "Status", "Assigned", ""].map((h) => (
+                {["Participant", "Gender · Dialect", "Recorded", "Progress", "Status", "Assigned", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -1394,11 +1397,11 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                 return (
                   <tr key={assignment.id} className="hover:bg-panelStrong/40">
                     <td className="px-4 py-3">
-                      <p className="font-medium text-ink">{speaker?.name || assignment.speakerName || "â€”"}</p>
+                      <p className="font-medium text-ink">{speaker?.name || assignment.speakerName || "—"}</p>
                       <p className="text-xs text-muted">{assignment.speakerEmail}</p>
                     </td>
                     <td className="px-4 py-3 text-xs text-muted">
-                      {[speaker?.gender, speaker?.dialect].filter(Boolean).join(" Â· ") || "â€”"}
+                      {[speaker?.gender, speaker?.dialect].filter(Boolean).join(" · ") || "—"}
                     </td>
                     <td className="px-4 py-3 text-muted">{assignmentSessions.length}</td>
                     <td className="px-4 py-3">
@@ -1423,9 +1426,9 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                       <button
                         type="button"
                         onClick={() => setSelectedAssignment(assignment)}
-                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white active:scale-95"
                       >
-                        Open â†’
+                        Open <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     </td>
                   </tr>
@@ -1463,7 +1466,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
 
       <input
         className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-primary"
-        placeholder="Search by speaker or projectâ€¦"
+        placeholder="Search by speaker or project…"
         value={filterText}
         onChange={(e) => setFilterText(e.target.value)}
       />
@@ -1477,7 +1480,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
-                {["Speaker", "Gender Â· Dialect", "Project", "Progress", "Status", "Assigned", ""].map((h) => (
+                {["Speaker", "Gender · Dialect", "Project", "Progress", "Status", "Assigned", ""].map((h) => (
                   <th key={h} className="px-4 py-3 font-medium">{h}</th>
                 ))}
               </tr>
@@ -1495,11 +1498,11 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                 return (
                   <tr key={a.id} className="group hover:bg-panelStrong/50">
                     <td className="px-4 py-3">
-                      <p className="font-medium text-ink">{sp?.name || a.speakerName || "â€”"}</p>
+                      <p className="font-medium text-ink">{sp?.name || a.speakerName || "—"}</p>
                       <p className="text-xs text-muted">{a.speakerEmail}</p>
                     </td>
                     <td className="px-4 py-3 text-xs text-muted">
-                      {[sp?.gender, sp?.dialect].filter(Boolean).join(" Â· ") || "â€”"}
+                      {[sp?.gender, sp?.dialect].filter(Boolean).join(" · ") || "—"}
                     </td>
                     <td className="px-4 py-3 text-muted">{a.projectName}</td>
                     <td className="px-4 py-3">
@@ -1523,9 +1526,9 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                       <button
                         type="button"
                         onClick={() => setSelectedAssignment(a)}
-                        className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary opacity-0 hover:bg-primary/10 group-hover:opacity-100"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary opacity-0 transition hover:bg-primary hover:text-white group-hover:opacity-100 active:scale-95"
                       >
-                        View â†’
+                        View <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     </td>
                   </tr>
@@ -1563,18 +1566,19 @@ function AssignmentDetail({
   const pct = totalPrompts > 0 ? Math.min(100, Math.round((validSessions.length / totalPrompts) * 100)) : 0;
 
   const profileFields = [
-    { label: "Gender", value: speaker?.gender || "â€”" },
-    { label: "Age", value: speaker?.age || "â€”" },
-    { label: "Dialect", value: speaker?.dialect || "â€”" },
-    { label: "Region", value: speaker?.region || "â€”" },
-    { label: "Country", value: speaker?.country || "â€”" },
-    { label: "Languages", value: speaker?.languages?.join(", ") || "â€”" },
+    { label: "Gender", value: speaker?.gender || "—" },
+    { label: "Age", value: speaker?.age || "—" },
+    { label: "Dialect", value: speaker?.dialect || "—" },
+    { label: "Region", value: speaker?.region || "—" },
+    { label: "Country", value: speaker?.country || "—" },
+    { label: "Languages", value: speaker?.languages?.join(", ") || "—" },
   ];
 
   return (
     <div className="space-y-6">
-      <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-muted hover:text-primary">
-        â† Back to sessions
+      <button type="button" onClick={onBack} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95">
+        <ArrowLeft className="h-4 w-4" />
+        Back to sessions
       </button>
 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
@@ -1620,7 +1624,7 @@ function AssignmentDetail({
           {[
             { label: "Recordings", value: String(sessions.length) },
             { label: "Tasks", value: String(tasks.length) },
-            { label: "Deadline", value: assignment.deadline || "â€”" },
+            { label: "Deadline", value: assignment.deadline || "—" },
           ].map((item) => (
             <div key={item.label} className="rounded-xl border border-slate-100 bg-panelStrong px-4 py-3">
               <p className="text-[11px] uppercase tracking-widest text-muted">{item.label}</p>
@@ -1678,7 +1682,7 @@ function AssignmentDetail({
           {sessions.map((s) => (
             <div key={s.id} className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm text-ink">{s.promptText || "â€”"}</p>
+                <p className="text-sm text-ink">{s.promptText || "—"}</p>
                 <StatusBadge status={s.qaStatus} />
               </div>
               {s.audioUrl && (
@@ -1781,7 +1785,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
     { key: "in-progress" as const, label: `In Progress (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "human-review").length})` },
     { key: "completed" as const, label: `Completed (${selectedParticipantSessions.filter((s) => s.transcriptionStatus === "completed").length})` },
   ];
-  const avgWer = totalWer.length ? (totalWer.reduce((a, b) => a + b, 0) / totalWer.length).toFixed(1) : "â€”";
+  const avgWer = totalWer.length ? (totalWer.reduce((a, b) => a + b, 0) / totalWer.length).toFixed(1) : "—";
 
   async function triggerASR(sessionId: string) {
     setUpdating(sessionId);
@@ -1815,9 +1819,10 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
         <button
           type="button"
           onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
-          className="text-sm font-medium text-muted hover:text-primary"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
         >
-          â† Back to participants
+          <ArrowLeft className="h-4 w-4" />
+          Back to participants
         </button>
         <SectionHeader title={selectedParticipant.speakerName} description={`${selectedProject.projectName} transcription sessions.`} />
 
@@ -1861,7 +1866,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                     <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                     <td className="px-4 py-3 text-muted">{s.sampleRate / 1000}k</td>
                     <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
-                    <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "â€”"}</td>
+                    <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "—"}</td>
                     <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
                   </tr>
                 ))}
@@ -1879,9 +1884,10 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
         <button
           type="button"
           onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
-          className="text-sm font-medium text-muted hover:text-primary"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
         >
-          â† Back to projects
+          <ArrowLeft className="h-4 w-4" />
+          Back to projects
         </button>
         <SectionHeader title={selectedProject.projectName} description="Participants in this transcription project." />
 
@@ -1911,15 +1917,15 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                       <td className="px-4 py-3 text-muted">{inProgressForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{completedForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{formatDuration(participant.duration)}</td>
-                      <td className="px-4 py-3 text-muted">{transcriptors.join(", ") || "â€”"}</td>
+                      <td className="px-4 py-3 text-muted">{transcriptors.join(", ") || "—"}</td>
                       <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
                           onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
-                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white active:scale-95"
                         >
-                          Open â†’
+                          Open <ArrowRight className="h-3.5 w-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -1941,7 +1947,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
         <MetricCard label="Pending" value={String(pending.length)} sub="Awaiting transcription" />
         <MetricCard label="Assigned" value={String(assigned.length)} sub={`${inProgress.length} in human review`} />
         <MetricCard label="Completed" value={String(completed.length)} sub="Fully transcribed" />
-        <MetricCard label="Avg WER" value={avgWer === "â€”" ? "â€”" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
+        <MetricCard label="Avg WER" value={avgWer === "—" ? "—" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
       </div>
 
       {projectGroups.length === 0 ? (
@@ -1973,9 +1979,9 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                       <button
                         type="button"
                         onClick={() => setSelectedProjectId(project.projectId)}
-                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white active:scale-95"
                       >
-                        Open â†’
+                        Open <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     </td>
                   </tr>
@@ -1996,7 +2002,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
         <MetricCard label="Pending" value={String(pending.length)} sub="Awaiting transcription" />
         <MetricCard label="Assigned" value={String(assigned.length)} sub={`${inProgress.length} in human review`} />
         <MetricCard label="Completed" value={String(completed.length)} sub="Fully transcribed" />
-        <MetricCard label="Avg WER" value={avgWer === "â€”" ? "â€”" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
+        <MetricCard label="Avg WER" value={avgWer === "—" ? "—" : `${avgWer}%`} sub="Word error rate across reviewed sessions" />
       </div>
 
       {loading ? (
@@ -2014,13 +2020,13 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
             <tbody className="divide-y divide-slate-100">
               {transcribable.map((s) => (
                 <tr key={s.id}>
-                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}â€¦</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}…</td>
                   <td className="px-4 py-3 text-ink">{s.projectName}</td>
                   <td className="px-4 py-3 text-muted">{s.speakerName || s.speakerId}</td>
                   <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                   <td className="px-4 py-3"><StatusBadge status={s.transcriptionStatus} /></td>
-                  <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "â€”"}</td>
-                  <td className="px-4 py-3 text-muted">{s.werScore != null ? `${s.werScore}%` : "â€”"}</td>
+                  <td className="px-4 py-3 text-muted">{s.assignedTranscriptorEmail || "—"}</td>
+                  <td className="px-4 py-3 text-muted">{s.werScore != null ? `${s.werScore}%` : "—"}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
                       {isSuperAdmin && s.transcriptionStatus === "pending" && (
@@ -2030,7 +2036,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                           onClick={() => void triggerASR(s.id)}
                           className="rounded-lg px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
                         >
-                          {updating === s.id ? "â€¦" : "Trigger ASR"}
+                          {updating === s.id ? "…" : "Trigger ASR"}
                         </button>
                       )}
                       {isSuperAdmin && (s.transcriptionStatus === "asr-done" || s.transcriptionStatus === "human-review") && (
@@ -2040,7 +2046,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
                           onClick={() => void markComplete(s.id)}
                           className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
                         >
-                          {updating === s.id ? "â€¦" : "Mark Complete"}
+                          {updating === s.id ? "…" : "Mark Complete"}
                         </button>
                       )}
                     </div>
@@ -2170,9 +2176,10 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
         <button
           type="button"
           onClick={() => { setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
-          className="text-sm font-medium text-muted hover:text-primary"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
         >
-          â† Back to participants
+          <ArrowLeft className="h-4 w-4" />
+          Back to participants
         </button>
         <SectionHeader title={selectedParticipant.speakerName} description={`${selectedProject.projectName} QA sessions.`} />
 
@@ -2214,7 +2221,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                   <tr key={s.id} className="hover:bg-panelStrong/40">
                     <td className="px-4 py-3 font-mono text-xs text-muted">{s.id.slice(0, 8)}...</td>
                     <td className="max-w-[220px] px-4 py-3 text-muted">
-                      <span className="block truncate">{s.promptText ?? "â€”"}</span>
+                      <span className="block truncate">{s.promptText ?? "—"}</span>
                       {s.submissionCount > 0 && (
                         <span className="mt-0.5 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
                           Resubmission #{s.submissionCount}
@@ -2223,8 +2230,8 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                     </td>
                     <td className="px-4 py-3 text-muted">{formatDuration(s.duration)}</td>
                     <td className="px-4 py-3"><StatusBadge status={s.qaStatus} /></td>
-                    <td className="px-4 py-3 text-muted">{s.assignedQAEmail || "â€”"}</td>
-                    <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "â€”"}</td>
+                    <td className="px-4 py-3 text-muted">{s.assignedQAEmail || "—"}</td>
+                    <td className="px-4 py-3 text-muted">{s.qaScore != null ? `${s.qaScore}/5` : "—"}</td>
                     <td className="px-4 py-3 text-muted">{formatDate(s.createdAt)}</td>
                   </tr>
                 ))}
@@ -2242,9 +2249,10 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
         <button
           type="button"
           onClick={() => { setSelectedProjectId(null); setSelectedParticipantId(null); setSearch(""); setFilter("all"); }}
-          className="text-sm font-medium text-muted hover:text-primary"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
         >
-          â† Back to projects
+          <ArrowLeft className="h-4 w-4" />
+          Back to projects
         </button>
         <SectionHeader title={selectedProject.projectName} description="Participants in this QA project." />
 
@@ -2266,7 +2274,7 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                   const approvedForParticipant = participant.sessions.filter((s) => s.qaStatus === "approved").length;
                   const rejectedForParticipant = participant.sessions.filter((s) => s.qaStatus === "rejected").length;
                   const scored = participant.sessions.filter((s) => s.qaScore != null).map((s) => s.qaScore as number);
-                  const avgScore = scored.length ? (scored.reduce((sum, score) => sum + score, 0) / scored.length).toFixed(1) : "â€”";
+                  const avgScore = scored.length ? (scored.reduce((sum, score) => sum + score, 0) / scored.length).toFixed(1) : "—";
                   const qaWorkers = Array.from(new Set(participant.sessions.map((s) => s.assignedQAEmail).filter(Boolean)));
                   return (
                     <tr key={participant.speakerId} className="hover:bg-panelStrong/40">
@@ -2275,16 +2283,16 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                       <td className="px-4 py-3 text-muted">{toReviewForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{approvedForParticipant}</td>
                       <td className="px-4 py-3 text-muted">{rejectedForParticipant}</td>
-                      <td className="px-4 py-3 text-muted">{avgScore === "â€”" ? "â€”" : `${avgScore}/5`}</td>
-                      <td className="px-4 py-3 text-muted">{qaWorkers.join(", ") || "â€”"}</td>
+                      <td className="px-4 py-3 text-muted">{avgScore === "—" ? "—" : `${avgScore}/5`}</td>
+                      <td className="px-4 py-3 text-muted">{qaWorkers.join(", ") || "—"}</td>
                       <td className="px-4 py-3 text-muted">{formatDate(participant.lastDate)}</td>
                       <td className="px-4 py-3 text-right">
                         <button
                           type="button"
                           onClick={() => { setSelectedParticipantId(participant.speakerId); setSearch(""); setFilter("all"); }}
-                          className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white active:scale-95"
                         >
-                          Open â†’
+                          Open <ArrowRight className="h-3.5 w-3.5" />
                         </button>
                       </td>
                     </tr>
@@ -2338,9 +2346,9 @@ function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
                       <button
                         type="button"
                         onClick={() => setSelectedProjectId(project.projectId)}
-                        className="rounded-lg px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white active:scale-95"
                       >
-                        Open â†’
+                        Open <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     </td>
                   </tr>
@@ -2596,7 +2604,7 @@ function DeliverySection({ activeUser: _user }: { activeUser: User }) {
                   <tr key={project.id} className="hover:bg-panelStrong/40">
                     <td className="px-4 py-3">
                       <p className="font-semibold text-ink">{project.name}</p>
-                      <p className="text-xs text-muted">{[project.client, project.dialect].filter(Boolean).join(" Â· ") || "No client set"}</p>
+                      <p className="text-xs text-muted">{[project.client, project.dialect].filter(Boolean).join(" · ") || "No client set"}</p>
                     </td>
                     <td className="px-4 py-3 text-muted">{approvedSessions.length}</td>
                     <td className="px-4 py-3 text-muted">{pendingSessions.length}</td>

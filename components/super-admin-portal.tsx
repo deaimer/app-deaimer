@@ -94,12 +94,13 @@ import {
   EvalTranscriptionPanel,
   type EvalTranscriptionSection,
 } from "@/components/eval-transcription-panel";
+import { CrowdWorkAdminPanel } from "@/components/crowd-work-admin-panel";
 
-type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection" | "evaluation-transcription";
+type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection" | "evaluation-transcription" | "crowd-work";
 type AccessTarget = "clients" | "admins" | "super";
 type AccessMode = "list" | "new" | "edit";
 type AdminDefaultsTab = "basics" | "services" | "role" | "pay" | "policies";
-type SuperWorkforceSection = "partners" | Extract<GlobalWorkforceAdminSection, "job-posts" | "candidates" | "signups" | "commissions" | "data">;
+type SuperWorkforceSection = "partners" | Extract<GlobalWorkforceAdminSection, "job-posts" | "crowd-projects" | "crowd" | "candidates" | "signups" | "commissions" | "data">;
 type EmailMode = "signup" | "signin";
 
 interface AccessPanelCopy {
@@ -2975,6 +2976,8 @@ export function SuperAdminPortal({
                 activeSection={activeEvalSection}
                 isSuperAdmin
               />
+            ) : activeView === "crowd-work" ? (
+              <CrowdWorkAdminPanel activeUser={activeUser} isSuperAdmin />
             ) : activeView === "company" ? (
               <CompanyPanel activeUser={activeUser} />
             ) : activeView === "careers" ? (

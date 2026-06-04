@@ -53,6 +53,13 @@ import {
   type GlobalWorkforceJobPost,
   subscribeToGlobalWorkforceJobPosts,
 } from "@/lib/firebase/global-workforce-jobs";
+import {
+  applyCrowdWork,
+  subscribeToCrowdWorkApplicationsByUid,
+  subscribeToCrowdWorkPostsPublished,
+  type CrowdWorkApplication,
+  type CrowdWorkPost,
+} from "@/lib/firebase/crowd-work";
 
 type CandidatePortalView =
   | "entry"
@@ -60,6 +67,7 @@ type CandidatePortalView =
   | "jobs"
   | "applications"
   | "saved-roles"
+  | "crowd-work"
   | "profile"
   | "settings";
 type EmailMode = "signup" | "signin";
@@ -114,6 +122,7 @@ const emptyCandidateProfileDraft: CandidateProfileDraft = {
   preferredWorkType: "",
   preferredJobType: "",
   openToRelocation: false,
+  openToCrowdWork: true,
   profileResume: null,
 };
 
@@ -266,6 +275,18 @@ const candidatePlatformMenuItems: PlatformSideMenuItem[] = [
     ),
   },
   {
+    label: "Crowd Work",
+    href: "/candidates/crowd-work",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-[15px] w-[15px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
     label: "Applications",
     href: "/candidates/applications",
     icon: (
@@ -360,6 +381,11 @@ const candidateHomeTabSummaries = [
     href: "/candidates/saved-roles",
     label: "Saved roles",
     body: "Keep promising openings in your shortlist so you can revisit them later.",
+  },
+  {
+    href: "/candidates/crowd-work",
+    label: "Crowd Work",
+    body: "Short paid tasks — audio recording, annotation, transcription — matched to your profile.",
   },
   {
     href: "/candidates/profile",
@@ -974,6 +1000,184 @@ function CandidateApplicationDetailCard({
 
 
 
+function CandidateCrowdWorkRow({
+  post,
+  isSelected,
+  isApplied,
+  isViewed,
+  onSelect,
+}: {
+  post: CrowdWorkPost;
+  isSelected: boolean;
+  isApplied?: boolean;
+  isViewed?: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={[
+        "block w-full border-b border-slate-100 px-4 py-3.5 text-left transition",
+        isSelected ? "bg-[#eaf4ff]" : "bg-white hover:bg-slate-50",
+      ].join(" ")}
+    >
+      <article className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-[13px] font-bold text-primary">
+          {post.title.slice(0, 1).toUpperCase() || "C"}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-semibold text-ink">{post.title}</p>
+            {isApplied ? (
+              <span className="shrink-0 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Applied</span>
+            ) : isViewed ? (
+              <span className="shrink-0 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Viewed</span>
+            ) : null}
+          </div>
+          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+            <span>{post.payPerSession > 0 ? `${post.payCurrency} ${post.payPerSession}/session` : "Pay TBD"}</span>
+            {post.taskType && (
+              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                {post.taskType}
+              </span>
+            )}
+            {post.languages.length > 0 && (
+              <span>{post.languages.slice(0, 2).join(", ")}{post.languages.length > 2 ? ` +${post.languages.length - 2}` : ""}</span>
+            )}
+          </p>
+        </div>
+      </article>
+    </button>
+  );
+}
+
+function CandidateCrowdWorkDetailCard({
+  post,
+  isApplied = false,
+  isViewed = false,
+}: {
+  post: CrowdWorkPost;
+  isApplied?: boolean;
+  isViewed?: boolean;
+}) {
+  const taskInfoItems = [
+    { label: "Project ID", value: post.postId || "—" },
+    { label: "Task type", value: post.taskType || "—" },
+    { label: "Pay/session", value: post.payPerSession > 0 ? `${post.payCurrency} ${post.payPerSession}` : "TBD" },
+    { label: "Duration", value: post.estimatedMinutesPerSession > 0 ? `~${post.estimatedMinutesPerSession} min` : "TBD" },
+    { label: "Sessions", value: post.totalSessionsNeeded > 0 ? post.totalSessionsNeeded.toLocaleString() : "TBD" },
+    { label: "Countries", value: post.countries.length === 0 || post.countries.includes("Worldwide") ? "Worldwide" : post.countries.join(", ") },
+    ...(post.ethnicity ? [{ label: "Ethnicity", value: post.ethnicity }] : []),
+  ];
+
+  return (
+    <div className="space-y-5">
+      {/* Apply button — always first */}
+      <div className="flex flex-wrap items-center gap-2">
+        {isViewed && !isApplied ? (
+          <span className="text-xs font-medium text-muted">Viewed ·</span>
+        ) : null}
+        {isApplied ? (
+          <span className="inline-flex min-w-[100px] items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-900">
+            Applied
+          </span>
+        ) : (
+          <Link
+            href={`/candidates/crowd-work/${post.id}/apply`}
+            className="inline-flex min-w-[100px] items-center justify-center rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+          >
+            {isViewed ? "Apply again" : "Apply"}
+          </Link>
+        )}
+      </div>
+
+      {/* Title + meta */}
+      <div>
+        <h2 className="text-2xl font-semibold leading-snug text-ink sm:text-3xl">{post.title}</h2>
+        <div
+          className="mt-2 flex items-center gap-x-3 gap-y-1 overflow-x-auto text-sm text-muted [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible"
+          style={{ scrollbarWidth: "none" }}
+        >
+          {post.payPerSession > 0 ? (
+            <span className="shrink-0">{post.payCurrency} {post.payPerSession}/session</span>
+          ) : null}
+          {post.taskType ? (
+            <><span className="shrink-0 text-slate-200">·</span><span className="shrink-0">{post.taskType}</span></>
+          ) : null}
+          {post.estimatedMinutesPerSession > 0 ? (
+            <><span className="shrink-0 text-slate-200">·</span><span className="shrink-0">~{post.estimatedMinutesPerSession} min/session</span></>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Task info pills */}
+      <div className="space-y-2">
+        {/* Mobile: scrollable */}
+        <div
+          className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden sm:hidden"
+          style={{ scrollbarWidth: "none" }}
+        >
+          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-muted/60">Task info:</span>
+          {taskInfoItems.map((item) => (
+            <span key={item.label} className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-muted">
+              {item.label}: <span className="font-semibold text-ink">{item.value}</span>
+            </span>
+          ))}
+        </div>
+        {/* Desktop: wrapping */}
+        <div className="hidden sm:block">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/60">Task info</p>
+          <div className="flex flex-wrap gap-1.5">
+            {taskInfoItems.map((item) => (
+              <span key={item.label} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-muted">
+                {item.label}: <span className="font-semibold text-ink">{item.value}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Languages pills */}
+        {post.languages.length > 0 ? (
+          <>
+            <div
+              className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden sm:hidden"
+              style={{ scrollbarWidth: "none" }}
+            >
+              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-muted/60">Languages:</span>
+              {post.languages.map((l) => (
+                <span key={l} className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">{l}</span>
+              ))}
+              {post.dialects.map((d) => (
+                <span key={d} className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-muted">{d}</span>
+              ))}
+            </div>
+            <div className="hidden sm:block">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted/60">Languages</p>
+              <div className="flex flex-wrap gap-1.5">
+                {post.languages.map((l) => (
+                  <span key={l} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">{l}</span>
+                ))}
+                {post.dialects.map((d) => (
+                  <span key={d} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-muted">{d}</span>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      {/* Description */}
+      {post.description ? (
+        <div className="border-t border-slate-100 pt-5">
+          <FormattedJobDescription content={post.description} />
+        </div>
+      ) : null}
+
+    </div>
+  );
+}
+
 function CandidateSavedRoleRow({
   job,
   isApplied,
@@ -1232,6 +1436,8 @@ export function CandidatePortal({
   instructionsMode = false,
   selectedApplicationJobId,
   selectedSavedJobId,
+  selectedCrowdPostId,
+  crowdApplyMode = false,
 }: {
   view: CandidatePortalView;
   allowProfileEdit?: boolean;
@@ -1240,6 +1446,8 @@ export function CandidatePortal({
   instructionsMode?: boolean;
   selectedApplicationJobId?: string;
   selectedSavedJobId?: string;
+  selectedCrowdPostId?: string;
+  crowdApplyMode?: boolean;
 }) {
   const router = useRouter();
   const firebaseReady = isFirebaseConfigured();
@@ -1255,6 +1463,8 @@ export function CandidatePortal({
   const isApplicationsView = view === "applications";
   const isApplicationDetailView = isApplicationsView && Boolean(selectedApplicationJobId);
   const isProfileView = view === "profile";
+  const isCrowdWorkView = view === "crowd-work" && !crowdApplyMode;
+  const isCrowdApplyView = view === "crowd-work" && Boolean(selectedCrowdPostId) && crowdApplyMode;
   const isWorkspaceView = view !== "entry";
   const shouldLoadApplications =
     isHomeView || isJobsView || isApplicationsView || isSavedRolesView || isProfileView;
@@ -1288,10 +1498,22 @@ export function CandidatePortal({
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isApplicationsLoading, setIsApplicationsLoading] = useState(false);
   const [isJobsLoading, setIsJobsLoading] = useState(false);
+  const [crowdWorkPosts, setCrowdWorkPosts] = useState<CrowdWorkPost[]>([]);
+  const [crowdWorkApplications, setCrowdWorkApplications] = useState<CrowdWorkApplication[]>([]);
+  const [isCrowdWorkLoading, setIsCrowdWorkLoading] = useState(false);
+  const [selectedBoardCrowdWorkId, setSelectedBoardCrowdWorkId] = useState<string | null>(null);
+  const [mobileCrowdWorkDrawerId, setMobileCrowdWorkDrawerId] = useState<string | null>(null);
+  const [crowdWorkSearchQuery, setCrowdWorkSearchQuery] = useState("");
+  const [crowdWorkTypeFilter, setCrowdWorkTypeFilter] = useState("all");
+  const [crowdWorkLangFilter, setCrowdWorkLangFilter] = useState("all");
+  const crowdWorkFiltersScrollRef = useRef<HTMLDivElement | null>(null);
+  const [isSubmittingCrowdApply, setIsSubmittingCrowdApply] = useState(false);
+  const [crowdApplyDone, setCrowdApplyDone] = useState(false);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [emailMode, setEmailMode] = useState<EmailMode>("signup");
   const [emailForm, setEmailForm] = useState(emptyEmailForm);
   const [isWhatsappNumberConfirmed, setIsWhatsappNumberConfirmed] = useState(false);
+  const [isPoliciesAccepted, setIsPoliciesAccepted] = useState(false);
   const [jobSearchQuery, setJobSearchQuery] = useState("");
   const [jobCountryFilter, setJobCountryFilter] = useState("all");
   const countryFilterAutoSetRef = useRef(false);
@@ -1575,6 +1797,34 @@ export function CandidatePortal({
   }, [activeUser, firebaseReady, shouldLoadJobs]);
 
   useEffect(() => {
+    if ((!isCrowdWorkView && !isCrowdApplyView) || !firebaseReady) {
+      setCrowdWorkPosts([]);
+      setIsCrowdWorkLoading(false);
+      return;
+    }
+    setIsCrowdWorkLoading(true);
+    return subscribeToCrowdWorkPostsPublished(
+      (posts) => {
+        setCrowdWorkPosts(posts);
+        setIsCrowdWorkLoading(false);
+      },
+      () => setIsCrowdWorkLoading(false),
+    );
+  }, [firebaseReady, isCrowdWorkView, isCrowdApplyView]);
+
+  useEffect(() => {
+    if ((!isCrowdWorkView && !isCrowdApplyView) || !firebaseReady || !activeUser) {
+      setCrowdWorkApplications([]);
+      return;
+    }
+    return subscribeToCrowdWorkApplicationsByUid(
+      activeUser.uid,
+      setCrowdWorkApplications,
+      () => {},
+    );
+  }, [activeUser, firebaseReady, isCrowdWorkView, isCrowdApplyView]);
+
+  useEffect(() => {
     if (!firebaseReady || !activeUser || applications.length === 0) {
       return;
     }
@@ -1660,7 +1910,7 @@ export function CandidatePortal({
   function handleDraftChange(
     event: ChangeEvent<HTMLInputElement | HTMLSelectElement>,
   ) {
-    const { name, value } = event.target;
+    const { name, value, type } = event.target;
 
     if (name === "phoneNumber" || name === "phoneCountryCode") {
       setIsWhatsappNumberConfirmed(false);
@@ -1668,7 +1918,7 @@ export function CandidatePortal({
 
     setDraft((current) => ({
       ...current,
-      [name]: value,
+      [name]: type === "checkbox" ? (event.target as HTMLInputElement).checked : value,
     }));
   }
 
@@ -1788,6 +2038,11 @@ export function CandidatePortal({
       return;
     }
 
+    if (!isPoliciesAccepted) {
+      setErrorMessage("You must accept the Deaimer Privacy & Data Policy to continue.");
+      return;
+    }
+
     setIsSavingProfile(true);
     setIsRedirectingToJobs(false);
     setErrorMessage(null);
@@ -1853,6 +2108,7 @@ export function CandidatePortal({
       setProfile(null);
       setDraft(createCandidateProfileDraft(activeUser));
       setIsWhatsappNumberConfirmed(false);
+      setIsPoliciesAccepted(false);
       setResolvedProfileUid(null);
       setIsEditingProfile(false);
       setIsRedirectingToJobs(false);
@@ -1987,6 +2243,7 @@ export function CandidatePortal({
     setDraft(emptyCandidateProfileDraft);
     setEmailForm(emptyEmailForm);
     setIsWhatsappNumberConfirmed(false);
+    setIsPoliciesAccepted(false);
     setResolvedProfileUid(null);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -2238,6 +2495,87 @@ export function CandidatePortal({
         : filteredJobs[0]?.id ?? null,
     );
   }, [filteredJobs]);
+
+  // ── Crowd Work board computed values ──────────────────────────────────────
+  const crowdWorkTypeOptions = Array.from(
+    new Set(crowdWorkPosts.map((p) => p.taskType).filter(Boolean)),
+  ).sort((a, b) => a.localeCompare(b));
+  const crowdWorkLangOptions = Array.from(
+    new Set(crowdWorkPosts.flatMap((p) => p.languages).filter(Boolean)),
+  ).sort((a, b) => a.localeCompare(b));
+  const filteredCrowdWorkPosts = crowdWorkPosts.filter((p) => {
+    const q = crowdWorkSearchQuery.trim().toLowerCase();
+    if (q && !([p.title, p.taskType, p.description, p.postId].join(" ").toLowerCase().includes(q))) return false;
+    if (crowdWorkTypeFilter !== "all" && p.taskType !== crowdWorkTypeFilter) return false;
+    if (crowdWorkLangFilter !== "all" && !p.languages.includes(crowdWorkLangFilter)) return false;
+    return true;
+  });
+  const selectedBoardCrowdWork =
+    filteredCrowdWorkPosts.find((p) => p.id === selectedBoardCrowdWorkId) ??
+    filteredCrowdWorkPosts[0] ??
+    null;
+  const mobileCrowdWorkPost = mobileCrowdWorkDrawerId
+    ? crowdWorkPosts.find((p) => p.id === mobileCrowdWorkDrawerId) ?? null
+    : null;
+  const appliedCrowdPostIds = new Set(
+    crowdWorkApplications.filter((a) => a.status === "applied" || a.status === "under-review" || a.status === "approved").map((a) => a.postDocId)
+  );
+  const viewedCrowdPostIds = new Set(
+    crowdWorkApplications.filter((a) => a.status === "viewed").map((a) => a.postDocId)
+  );
+  const crowdApplyPost = selectedCrowdPostId
+    ? crowdWorkPosts.find((p) => p.id === selectedCrowdPostId) ?? null
+    : null;
+
+  useEffect(() => {
+    if (filteredCrowdWorkPosts.length === 0) {
+      setSelectedBoardCrowdWorkId(null);
+      return;
+    }
+    setSelectedBoardCrowdWorkId((current) =>
+      current && filteredCrowdWorkPosts.some((p) => p.id === current)
+        ? current
+        : filteredCrowdWorkPosts[0]?.id ?? null,
+    );
+  }, [filteredCrowdWorkPosts]);
+
+  function clearCrowdWorkFilters() {
+    setCrowdWorkSearchQuery("");
+    setCrowdWorkTypeFilter("all");
+    setCrowdWorkLangFilter("all");
+  }
+
+  async function submitCrowdApply() {
+    if (!crowdApplyPost || !activeUser) return;
+    const hasForm = Boolean(crowdApplyPost.googleFormUrl?.trim());
+    setIsSubmittingCrowdApply(true);
+    try {
+      if (hasForm) {
+        window.open(crowdApplyPost.googleFormUrl, "_blank", "noopener,noreferrer");
+      }
+      await applyCrowdWork(
+        crowdApplyPost.id,
+        crowdApplyPost.postId,
+        crowdApplyPost.title,
+        activeUser.uid,
+        profile?.fullName?.trim() || activeUser.displayName || activeUser.email || "",
+        activeUser.email ?? "",
+        profile ? `${profile.phoneCountryCode ?? ""}${profile.phoneNumber ?? ""}`.trim() : "",
+        hasForm ? "viewed" : "applied",
+      );
+      setCrowdApplyDone(true);
+    } catch {
+      setCrowdApplyDone(true);
+    } finally {
+      setIsSubmittingCrowdApply(false);
+    }
+  }
+
+  function scrollCrowdWorkFilters(direction: "left" | "right") {
+    const container = crowdWorkFiltersScrollRef.current;
+    if (!container) return;
+    container.scrollBy({ left: direction === "left" ? -240 : 240, behavior: "smooth" });
+  }
 
   const themeClass = candidateTheme === "dark" ? "cand-dark" : "";
 
@@ -3500,6 +3838,382 @@ export function CandidatePortal({
     });
   }
 
+  if (isCrowdApplyView && activeUser) {
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6 lg:px-10">
+          {isCrowdWorkLoading && !crowdApplyPost ? (
+            <div className="flex items-center gap-3 rounded-[1rem] border border-slate-200 bg-white px-4 py-4 text-sm text-muted shadow-panel">
+              <LoadingSpinner className="h-4 w-4 border-primary/30 border-t-primary" />
+              <span>Loading...</span>
+            </div>
+          ) : null}
+
+          {!isCrowdWorkLoading && !crowdApplyPost ? (
+            <section className="rounded-[1.75rem] border border-slate-200 bg-white p-8 shadow-panel">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primarySoft">
+                Task not found
+              </p>
+              <h1 className="mt-4 text-3xl font-semibold text-ink">This task is no longer available</h1>
+              <p className="mt-4 max-w-2xl text-sm leading-7 text-muted">
+                The task may have been removed or the link may be incorrect.
+              </p>
+              <div className="mt-6">
+                <Link
+                  href="/candidates/crowd-work"
+                  className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+                >
+                  Back to crowd work
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
+          {crowdApplyPost ? (
+            <section className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-panel sm:p-8">
+              {/* Back link */}
+              <Link
+                href="/candidates/crowd-work"
+                className="mb-6 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-muted transition hover:text-ink"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.612l4.158 3.96a.75.75 0 1 1-1.04 1.08l-5.5-5.25a.75.75 0 0 1 0-1.08l5.5-5.25a.75.75 0 1 1 1.04 1.08L5.612 9.25H16.25A.75.75 0 0 1 17 10Z" clipRule="evenodd" />
+                </svg>
+                Crowd Work
+              </Link>
+
+              {/* Title + meta */}
+              <div className="mb-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primarySoft">
+                  {crowdApplyPost.googleFormUrl ? "Apply via Google Form" : "Apply"}
+                </p>
+                <h1 className="mt-2 text-2xl font-semibold text-ink sm:text-3xl">{crowdApplyPost.title}</h1>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {crowdApplyPost.taskType ? (
+                    <span className="rounded-full border border-slate-200 bg-panelStrong px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                      {crowdApplyPost.taskType}
+                    </span>
+                  ) : null}
+                  <span className="rounded-full border border-slate-200 bg-panelStrong px-2.5 py-0.5 text-[10px] font-semibold text-muted">
+                    {crowdApplyPost.postId}
+                  </span>
+                  {crowdApplyPost.payPerSession > 0 ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                      {crowdApplyPost.payCurrency} {crowdApplyPost.payPerSession}/session
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              {crowdApplyDone ? (
+                <div>
+                  {crowdApplyPost.googleFormUrl ? (
+                    <div className="rounded-[1.2rem] border border-sky-200 bg-sky-50 px-5 py-6 text-center">
+                      <p className="text-base font-semibold text-sky-900">Google Form opened!</p>
+                      <p className="mt-1.5 text-sm leading-6 text-sky-700">
+                        Complete the form in the new tab to submit your application.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-5 py-6 text-center">
+                      <p className="text-base font-semibold text-emerald-900">Application submitted!</p>
+                      <p className="mt-1.5 text-sm leading-6 text-emerald-700">
+                        We will review your application and be in touch.
+                      </p>
+                    </div>
+                  )}
+                  <div className="mt-5">
+                    <Link
+                      href="/candidates/crowd-work"
+                      className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+                    >
+                      Back to Crowd Work
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Instructions */}
+                  {crowdApplyPost.requirements ? (
+                    <div className="border-t border-slate-100 pt-5">
+                      <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-muted/60">
+                        Instructions
+                      </p>
+                      <FormattedJobDescription content={crowdApplyPost.requirements} />
+                    </div>
+                  ) : (
+                    <p className="border-t border-slate-100 pt-5 text-sm leading-6 text-muted">
+                      Click below to confirm your application for this task.
+                    </p>
+                  )}
+
+                  {/* Apply button */}
+                  <button
+                    type="button"
+                    onClick={() => void submitCrowdApply()}
+                    disabled={isSubmittingCrowdApply}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-60"
+                  >
+                    {isSubmittingCrowdApply ? (
+                      <>
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                        <span>Opening…</span>
+                      </>
+                    ) : crowdApplyPost.googleFormUrl ? (
+                      <>
+                        <span>Apply — opens Google Form</span>
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" />
+                          <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" />
+                        </svg>
+                      </>
+                    ) : (
+                      "Apply"
+                    )}
+                  </button>
+                </div>
+              )}
+            </section>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
+
+  if (isCrowdWorkView && activeUser) {
+    return shell(
+      <main className="min-h-screen bg-background text-ink">
+        <div className="lg:mx-auto lg:max-w-[1440px] lg:px-6 lg:py-8 xl:px-10">
+          {profile && !profile.openToCrowdWork && (
+            <div className="mx-4 mb-4 mt-4 flex items-start gap-4 rounded-[1.25rem] border border-amber-200 bg-amber-50 p-4 lg:mx-0 lg:mb-5 lg:mt-0">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-900">You are not opted in to Crowd Work</p>
+                <p className="mt-0.5 text-xs leading-6 text-amber-700">
+                  Enable Crowd Work in your profile preferences to be matched to paid tasks.
+                </p>
+              </div>
+              <Link
+                href="/candidates/profile"
+                className="shrink-0 rounded-full bg-amber-900 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-800"
+              >
+                Update preferences
+              </Link>
+            </div>
+          )}
+
+          <section className="bg-white lg:overflow-hidden lg:rounded-[1.85rem] lg:border lg:border-slate-200">
+            {/* Filter bar */}
+            <div className="border-b border-slate-100 bg-white px-4 py-3 sm:px-5">
+              {/* Mobile search */}
+              <div className="mb-2.5 sm:hidden">
+                <input
+                  value={crowdWorkSearchQuery}
+                  onChange={(e) => setCrowdWorkSearchQuery(e.target.value)}
+                  className={[
+                    "h-11 w-full rounded-full border px-4 text-sm font-medium outline-none transition",
+                    crowdWorkSearchQuery
+                      ? "border-primary/30 bg-primary/10 text-primary placeholder:text-primary/70"
+                      : "border-slate-300 bg-white text-ink placeholder:text-muted",
+                  ].join(" ")}
+                  placeholder="Search tasks"
+                />
+              </div>
+              {/* Scrollable filter row */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => scrollCrowdWorkFilters("left")}
+                  aria-label="Scroll filters left"
+                  className="absolute left-0 top-1/2 z-10 hidden -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white h-11 w-11 text-ink shadow-sm transition hover:border-primary/30 hover:bg-panelStrong sm:inline-flex"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                    <path d="M12.5 5 7.5 10l5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <div
+                  ref={crowdWorkFiltersScrollRef}
+                  className="overflow-x-auto py-1 sm:px-14 [&::-webkit-scrollbar]:hidden"
+                  style={{ scrollbarWidth: "none" }}
+                >
+                  <div className="flex min-w-max items-center gap-2.5">
+                    {/* Desktop search */}
+                    <input
+                      value={crowdWorkSearchQuery}
+                      onChange={(e) => setCrowdWorkSearchQuery(e.target.value)}
+                      className={[
+                        "hidden h-11 w-[220px] rounded-full border px-4 text-sm font-medium outline-none transition sm:block",
+                        crowdWorkSearchQuery
+                          ? "border-primary/30 bg-primary/10 text-primary placeholder:text-primary/70"
+                          : "border-slate-300 bg-white text-ink placeholder:text-muted",
+                      ].join(" ")}
+                      placeholder="Search tasks"
+                    />
+                    <select
+                      value={crowdWorkTypeFilter}
+                      onChange={(e) => setCrowdWorkTypeFilter(e.target.value)}
+                      className={[
+                        "h-11 min-w-[160px] rounded-full border px-4 text-sm font-medium outline-none transition",
+                        crowdWorkTypeFilter !== "all"
+                          ? "border-primary/30 bg-primary/10 text-primary"
+                          : "border-slate-300 bg-white text-ink",
+                      ].join(" ")}
+                    >
+                      <option value="all">Task type</option>
+                      {crowdWorkTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                    <select
+                      value={crowdWorkLangFilter}
+                      onChange={(e) => setCrowdWorkLangFilter(e.target.value)}
+                      className={[
+                        "h-11 min-w-[140px] rounded-full border px-4 text-sm font-medium outline-none transition",
+                        crowdWorkLangFilter !== "all"
+                          ? "border-primary/30 bg-primary/10 text-primary"
+                          : "border-slate-300 bg-white text-ink",
+                      ].join(" ")}
+                    >
+                      <option value="all">Language</option>
+                      {crowdWorkLangOptions.map((l) => <option key={l} value={l}>{l}</option>)}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={clearCrowdWorkFilters}
+                      className="inline-flex h-11 items-center justify-center rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-ink transition hover:bg-panelStrong"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => scrollCrowdWorkFilters("right")}
+                  aria-label="Scroll filters right"
+                  className="absolute right-0 top-1/2 z-10 hidden -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white h-11 w-11 text-ink shadow-sm transition hover:border-primary/30 hover:bg-panelStrong sm:inline-flex"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                    <path d="M7.5 5 12.5 10l-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Split layout */}
+            <div className="grid lg:grid-cols-[minmax(260px,0.42fr)_minmax(0,1fr)]">
+              {/* Task list */}
+              <aside className="flex flex-col border-slate-100 lg:max-h-[calc(100vh-14rem)] lg:border-r">
+                <div className="shrink-0 border-b border-slate-100 px-4 py-2.5 text-xs font-medium text-muted/70 lg:px-5">
+                  {isCrowdWorkLoading
+                    ? "Loading tasks..."
+                    : filteredCrowdWorkPosts.length > 0
+                      ? `${filteredCrowdWorkPosts.length} task${filteredCrowdWorkPosts.length === 1 ? "" : "s"} available`
+                      : "No matching tasks"}
+                </div>
+                <div className="flex-1 lg:overflow-y-auto">
+                  {!isCrowdWorkLoading && crowdWorkPosts.length === 0 ? (
+                    <div className="px-5 py-8 text-sm leading-7 text-muted">
+                      No crowd work tasks are available yet. Check back once tasks are published.
+                    </div>
+                  ) : null}
+                  {!isCrowdWorkLoading && crowdWorkPosts.length > 0 && filteredCrowdWorkPosts.length === 0 ? (
+                    <div className="px-5 py-8 text-sm leading-7 text-muted">
+                      No tasks match your current filters. Clear a filter and try again.
+                    </div>
+                  ) : null}
+                  {filteredCrowdWorkPosts.map((post) => (
+                    <CandidateCrowdWorkRow
+                      key={post.id}
+                      post={post}
+                      isSelected={selectedBoardCrowdWork?.id === post.id}
+                      isApplied={appliedCrowdPostIds.has(post.id)}
+                      isViewed={viewedCrowdPostIds.has(post.id)}
+                      onSelect={() => {
+                        setSelectedBoardCrowdWorkId(post.id);
+                        setMobileCrowdWorkDrawerId(post.id);
+                      }}
+                    />
+                  ))}
+                </div>
+              </aside>
+
+              {/* Detail panel — desktop only */}
+              <section className="hidden bg-white lg:block lg:max-h-[calc(100vh-14rem)] lg:overflow-y-auto">
+                <div className="p-5 sm:p-6">
+                  {isCrowdWorkLoading && !selectedBoardCrowdWork ? (
+                    <div className="flex min-h-[320px] items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5 text-sm text-muted shadow-panel">
+                      <div className="flex items-center gap-3">
+                        <LoadingSpinner className="h-5 w-5 border-primary/30 border-t-primary" />
+                        <span>Loading task details...</span>
+                      </div>
+                    </div>
+                  ) : null}
+                  {!isCrowdWorkLoading && !selectedBoardCrowdWork ? (
+                    <div className="flex min-h-[320px] items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white px-6 py-5 text-sm leading-7 text-muted shadow-panel">
+                      Select a task from the list to review its full details.
+                    </div>
+                  ) : null}
+                  {selectedBoardCrowdWork ? (
+                    <CandidateCrowdWorkDetailCard
+                      post={selectedBoardCrowdWork}
+                      isApplied={appliedCrowdPostIds.has(selectedBoardCrowdWork.id)}
+                      isViewed={viewedCrowdPostIds.has(selectedBoardCrowdWork.id)}
+                    />
+                  ) : null}
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+
+        {/* Mobile bottom drawer */}
+        {mobileCrowdWorkDrawerId ? (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setMobileCrowdWorkDrawerId(null)}
+            />
+            <div className="absolute bottom-0 left-0 right-0 flex max-h-[92dvh] flex-col rounded-t-3xl bg-white shadow-2xl">
+              <button
+                type="button"
+                onClick={() => setMobileCrowdWorkDrawerId(null)}
+                aria-label="Close"
+                className="flex w-full shrink-0 flex-col items-center gap-1.5 pb-2 pt-3"
+              >
+                <div className="h-1 w-10 rounded-full bg-slate-300" />
+              </button>
+              <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setMobileCrowdWorkDrawerId(null)}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary"
+                >
+                  <span aria-hidden="true">←</span>
+                  Back to tasks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileCrowdWorkDrawerId(null)}
+                  aria-label="Close"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-5 pb-8 pt-5">
+                {mobileCrowdWorkPost ? (
+                  <CandidateCrowdWorkDetailCard
+                    post={mobileCrowdWorkPost}
+                    isApplied={appliedCrowdPostIds.has(mobileCrowdWorkPost.id)}
+                    isViewed={viewedCrowdPostIds.has(mobileCrowdWorkPost.id)}
+                  />
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+      </main>
+    );
+  }
+
   if (isSettingsView && activeUser) {
     return renderCandidateWorkspacePage({
       eyebrow: "Settings",
@@ -4102,20 +4816,6 @@ export function CandidatePortal({
                         />
                       </label>
 
-                      <label className="flex gap-3 rounded-[1rem] border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-950 sm:col-span-2">
-                        <input
-                          type="checkbox"
-                          checked={isWhatsappNumberConfirmed}
-                          onChange={(event) => setIsWhatsappNumberConfirmed(event.target.checked)}
-                          required
-                          className="mt-1 h-4 w-4 rounded border-blue-300 text-primary focus:ring-primary"
-                        />
-                        <span>
-                          I confirm this phone number is active on WhatsApp and can be used by
-                          Deaimer to contact me about roles and application updates.
-                        </span>
-                      </label>
-
                       <label className="block sm:col-span-2">
                         <span className="mb-2 block text-sm font-medium text-ink">
                           Date of birth
@@ -4134,6 +4834,45 @@ export function CandidatePortal({
                         </span>
                       </label>
                     </div>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 rounded-[1rem] border border-slate-200 bg-white">
+                    <label className="flex cursor-pointer items-start gap-3 px-4 py-3 text-sm leading-6 text-ink transition hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={isWhatsappNumberConfirmed}
+                        onChange={(e) => setIsWhatsappNumberConfirmed(e.target.checked)}
+                        required
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded accent-primary"
+                      />
+                      <span>I confirm that all information I provide — including my phone number, name, and contact details — may be used to contact me about roles, tasks, and application updates.</span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-3 px-4 py-3 text-sm leading-6 text-ink transition hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={isPoliciesAccepted}
+                        onChange={(e) => setIsPoliciesAccepted(e.target.checked)}
+                        required
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded accent-primary"
+                      />
+                      <span>
+                        I have read and agree to the{" "}
+                        <a href="/policy" target="_blank" rel="noreferrer" className="font-semibold text-primary underline underline-offset-2 hover:text-primaryStrong">
+                          Privacy &amp; Data Policy
+                        </a>
+                        , including how my personal data and profile information will be collected, stored, and used.
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-3 px-4 py-3 text-sm leading-6 text-ink transition hover:bg-slate-50">
+                      <input
+                        name="openToCrowdWork"
+                        type="checkbox"
+                        checked={draft.openToCrowdWork}
+                        onChange={handleDraftChange}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded accent-primary"
+                      />
+                      <span>Consider me for Crowd Work — short paid tasks matched to my language and profile.</span>
+                    </label>
                   </div>
 
                   <button

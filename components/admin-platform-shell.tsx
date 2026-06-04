@@ -21,6 +21,8 @@ import { servicePages } from "@/lib/service-pages";
 
 const globalWorkforceSections = [
   { label: "Job posts", section: "job-posts" },
+  { label: "Crowd projects", section: "crowd-projects" },
+  { label: "Crowd", section: "crowd" },
   { label: "Candidates", section: "candidates" },
   { label: "Commissions", section: "commissions" },
 ] as const;
@@ -35,6 +37,10 @@ const evalTranscriptionSections = [
   { label: "Assignments", section: "assignments" },
   { label: "QA Review", section: "qa-review" },
   { label: "Transcription", section: "transcription" },
+] as const;
+
+const crowdWorkSections = [
+  { label: "Posts", section: "posts" },
 ] as const;
 
 function AdminPlatformShellContent() {
@@ -184,8 +190,18 @@ function AdminPlatformShellContent() {
     ];
   });
 
+  const crowdWorkMenuItems: PlatformSideMenuItem[] = [
+    { label: "Crowd Work", isSectionHeader: true } satisfies PlatformSideMenuItem,
+    ...crowdWorkSections.map((item) => ({
+      label: item.label,
+      href: `/admin?service=crowd-work&section=${item.section}`,
+      active: requestedService === "crowd-work" && requestedSection === item.section,
+    })),
+  ];
+
   const adminPlatformMenuItems: PlatformSideMenuItem[] = [
     ...workMenuItems,
+    ...crowdWorkMenuItems,
     {
       label: "Personal",
       isSectionHeader: true,

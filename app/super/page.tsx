@@ -30,6 +30,8 @@ export default async function SuperAdminPage({
   const activeEditingEmail = resolvedSearchParams.email ?? null;
   const activeWorkforceSection =
     resolvedSearchParams.section === "job-posts" ||
+    resolvedSearchParams.section === "crowd-projects" ||
+    resolvedSearchParams.section === "crowd" ||
     resolvedSearchParams.section === "candidates" ||
     resolvedSearchParams.section === "signups" ||
     resolvedSearchParams.section === "commissions" ||
@@ -94,6 +96,16 @@ export default async function SuperAdminPage({
       label: "Job posts",
       href: "/super?view=workforce&section=job-posts",
       active: activeView === "workforce" && activeWorkforceSection === "job-posts",
+    },
+    {
+      label: "Crowd projects",
+      href: "/super?view=workforce&section=crowd-projects",
+      active: activeView === "workforce" && activeWorkforceSection === "crowd-projects",
+    },
+    {
+      label: "Crowd",
+      href: "/super?view=workforce&section=crowd",
+      active: activeView === "workforce" && activeWorkforceSection === "crowd",
     },
     {
       label: "Candidates",
