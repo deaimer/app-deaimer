@@ -223,6 +223,7 @@ export const crowdWorkApplicationStatusOptions = [
   "applied",
   "under-review",
   "approved",
+  "rejected",
 ] as const;
 
 export type CrowdWorkApplicationStatus = (typeof crowdWorkApplicationStatusOptions)[number];
@@ -357,8 +358,8 @@ export async function applyCrowdWork(
 
   if (existing.exists()) {
     const current = existing.data()?.status as CrowdWorkApplicationStatus | undefined;
-    // Never downgrade from applied/approved
-    if (current === "applied" || current === "approved" || current === "under-review") return;
+    // Never downgrade from applied/approved/rejected (admin-set statuses)
+    if (current === "applied" || current === "approved" || current === "under-review" || current === "rejected") return;
     // For "viewed": just update the timestamp
     await setDoc(ref, { status, updatedAt: serverTimestamp() }, { merge: true });
     return;

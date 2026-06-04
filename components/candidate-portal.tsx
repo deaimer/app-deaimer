@@ -1000,17 +1000,30 @@ function CandidateApplicationDetailCard({
 
 
 
+const crowdStatusRowBadge: Record<string, string> = {
+  viewed: "bg-slate-100 text-slate-500",
+  applied: "bg-amber-100 text-amber-800",
+  "under-review": "bg-sky-100 text-sky-800",
+  approved: "bg-emerald-100 text-emerald-800",
+  rejected: "bg-rose-100 text-rose-700",
+};
+const crowdStatusRowLabel: Record<string, string> = {
+  viewed: "Viewed",
+  applied: "Applied",
+  "under-review": "Under Review",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
 function CandidateCrowdWorkRow({
   post,
   isSelected,
-  isApplied,
-  isViewed,
+  status,
   onSelect,
 }: {
   post: CrowdWorkPost;
   isSelected: boolean;
-  isApplied?: boolean;
-  isViewed?: boolean;
+  status?: string | null;
   onSelect: () => void;
 }) {
   return (
@@ -1027,24 +1040,17 @@ function CandidateCrowdWorkRow({
           {post.title.slice(0, 1).toUpperCase() || "C"}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-semibold text-ink">{post.title}</p>
-            {isApplied ? (
-              <span className="shrink-0 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Applied</span>
-            ) : isViewed ? (
-              <span className="shrink-0 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Viewed</span>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-semibold text-ink">{post.title}</p>
+            {status ? (
+              <span className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${crowdStatusRowBadge[status] ?? "bg-slate-100 text-slate-500"}`}>
+                {crowdStatusRowLabel[status] ?? status}
+              </span>
             ) : null}
           </div>
-          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
-            <span>{post.payPerSession > 0 ? `${post.payCurrency} ${post.payPerSession}/session` : "Pay TBD"}</span>
-            {post.taskType && (
-              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                {post.taskType}
-              </span>
-            )}
-            {post.languages.length > 0 && (
-              <span>{post.languages.slice(0, 2).join(", ")}{post.languages.length > 2 ? ` +${post.languages.length - 2}` : ""}</span>
-            )}
+          <p className="mt-0.5 text-xs text-muted">
+            {post.payPerSession > 0 ? `${post.payCurrency} ${post.payPerSession}/session` : "Pay TBD"}
+            {post.taskType ? ` · ${post.taskType}` : ""}
           </p>
         </div>
       </article>
@@ -1052,15 +1058,69 @@ function CandidateCrowdWorkRow({
   );
 }
 
+function CandidateCrowdApplicationRow({ app }: { app: CrowdWorkApplication }) {
+  const crowdStatusLabel: Record<string, string> = {
+    viewed: "Viewed",
+    applied: "Applied",
+    "under-review": "Under Review",
+    approved: "Approved",
+    rejected: "Rejected",
+  };
+  const crowdStatusStyle: Record<string, string> = {
+    viewed: "border-slate-200 bg-slate-50 text-slate-600",
+    applied: "border-amber-200 bg-amber-50 text-amber-900",
+    "under-review": "border-sky-200 bg-sky-50 text-sky-900",
+    approved: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  };
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+        {app.postTitle.slice(0, 1).toUpperCase()}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={["inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", crowdStatusStyle[app.status] ?? crowdStatusStyle.viewed].join(" ")}>
+            {crowdStatusLabel[app.status] ?? app.status}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+            Crowd
+          </span>
+        </div>
+        <p className="mt-1 text-sm font-semibold text-ink">{app.postTitle}</p>
+        <p className="mt-0.5 text-xs text-muted">{app.postId}</p>
+      </div>
+    </div>
+  );
+}
+
+const crowdDetailStatusBadge: Record<string, string> = {
+  viewed: "border-slate-200 bg-slate-50 text-slate-600",
+  applied: "border-amber-200 bg-amber-50 text-amber-900",
+  "under-review": "border-sky-200 bg-sky-50 text-sky-900",
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  rejected: "border-rose-200 bg-rose-50 text-rose-700",
+};
+const crowdDetailStatusLabel: Record<string, string> = {
+  viewed: "Viewed",
+  applied: "Applied",
+  "under-review": "Under Review",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
 function CandidateCrowdWorkDetailCard({
   post,
-  isApplied = false,
-  isViewed = false,
+  application = null,
+  onApply,
 }: {
   post: CrowdWorkPost;
-  isApplied?: boolean;
-  isViewed?: boolean;
+  application?: CrowdWorkApplication | null;
+  onApply?: () => void;
 }) {
+  const status = application?.status ?? null;
+  const isLocked = status === "applied" || status === "under-review" || status === "approved" || status === "rejected";
+
   const taskInfoItems = [
     { label: "Project ID", value: post.postId || "—" },
     { label: "Task type", value: post.taskType || "—" },
@@ -1073,21 +1133,24 @@ function CandidateCrowdWorkDetailCard({
 
   return (
     <div className="space-y-5">
-      {/* Apply button — always first */}
+      {/* Apply / status — always first */}
       <div className="flex flex-wrap items-center gap-2">
-        {isViewed && !isApplied ? (
-          <span className="text-xs font-medium text-muted">Viewed ·</span>
+        {status ? (
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${crowdDetailStatusBadge[status] ?? crowdDetailStatusBadge.viewed}`}>
+            {crowdDetailStatusLabel[status] ?? status}
+          </span>
         ) : null}
-        {isApplied ? (
-          <span className="inline-flex min-w-[100px] items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-900">
-            Applied
+        {isLocked ? (
+          <span className="inline-flex min-w-[100px] cursor-not-allowed items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-5 py-2 text-sm font-semibold text-slate-400">
+            Apply
           </span>
         ) : (
           <Link
             href={`/candidates/crowd-work/${post.id}/apply`}
+            onClick={onApply}
             className="inline-flex min-w-[100px] items-center justify-center rounded-full bg-primary px-5 py-2 text-sm font-semibold text-white transition hover:bg-primaryStrong"
           >
-            {isViewed ? "Apply again" : "Apply"}
+            Apply
           </Link>
         )}
       </div>
@@ -1813,7 +1876,7 @@ export function CandidatePortal({
   }, [firebaseReady, isCrowdWorkView, isCrowdApplyView]);
 
   useEffect(() => {
-    if ((!isCrowdWorkView && !isCrowdApplyView) || !firebaseReady || !activeUser) {
+    if ((!isCrowdWorkView && !isCrowdApplyView && !isApplicationsView) || !firebaseReady || !activeUser) {
       setCrowdWorkApplications([]);
       return;
     }
@@ -1822,7 +1885,7 @@ export function CandidatePortal({
       setCrowdWorkApplications,
       () => {},
     );
-  }, [activeUser, firebaseReady, isCrowdWorkView, isCrowdApplyView]);
+  }, [activeUser, firebaseReady, isCrowdWorkView, isCrowdApplyView, isApplicationsView]);
 
   useEffect(() => {
     if (!firebaseReady || !activeUser || applications.length === 0) {
@@ -2469,7 +2532,7 @@ export function CandidatePortal({
         imageUrl: draft.photoUrl || profile?.photoUrl || activeUser.photoURL,
       }
     : undefined;
-  const candidateShellSideMenuItems = activeUser && !isCreatingCandidateProfile && profile
+  const candidateShellSideMenuItems = activeUser
     ? candidatePlatformMenuItems.filter(
         (item) => item.label !== "Documents" && item.href !== "/candidates/documents",
       )
@@ -2517,14 +2580,14 @@ export function CandidatePortal({
   const mobileCrowdWorkPost = mobileCrowdWorkDrawerId
     ? crowdWorkPosts.find((p) => p.id === mobileCrowdWorkDrawerId) ?? null
     : null;
-  const appliedCrowdPostIds = new Set(
-    crowdWorkApplications.filter((a) => a.status === "applied" || a.status === "under-review" || a.status === "approved").map((a) => a.postDocId)
-  );
-  const viewedCrowdPostIds = new Set(
-    crowdWorkApplications.filter((a) => a.status === "viewed").map((a) => a.postDocId)
+  const crowdWorkApplicationMap = new Map(
+    crowdWorkApplications.map((a) => [a.postDocId, a])
   );
   const crowdApplyPost = selectedCrowdPostId
     ? crowdWorkPosts.find((p) => p.id === selectedCrowdPostId) ?? null
+    : null;
+  const crowdApplyPostApplication = selectedCrowdPostId
+    ? crowdWorkApplicationMap.get(selectedCrowdPostId) ?? null
     : null;
 
   useEffect(() => {
@@ -2561,7 +2624,7 @@ export function CandidatePortal({
         profile?.fullName?.trim() || activeUser.displayName || activeUser.email || "",
         activeUser.email ?? "",
         profile ? `${profile.phoneCountryCode ?? ""}${profile.phoneNumber ?? ""}`.trim() : "",
-        hasForm ? "viewed" : "applied",
+        "applied",
       );
       setCrowdApplyDone(true);
     } catch {
@@ -3623,7 +3686,7 @@ export function CandidatePortal({
             </div>
           ) : null}
 
-          {!isApplicationsLoading && applications.length === 0 ? (
+          {!isApplicationsLoading && applications.length === 0 && crowdWorkApplications.length === 0 ? (
             <div className="mt-6 rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
               <p className="text-lg font-semibold text-ink">No applications yet</p>
               <p className="mt-3 text-sm leading-7 text-muted">
@@ -3639,6 +3702,15 @@ export function CandidatePortal({
                   key={`${application.jobId}-${application.uid}`}
                   application={application}
                 />
+              ))}
+            </div>
+          ) : null}
+
+          {crowdWorkApplications.length > 0 ? (
+            <div className="mt-6 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Crowd Work</p>
+              {crowdWorkApplications.map((app) => (
+                <CandidateCrowdApplicationRow key={app.id} app={app} />
               ))}
             </div>
           ) : null}
@@ -3905,74 +3977,108 @@ export function CandidatePortal({
                 </div>
               </div>
 
-              {crowdApplyDone ? (
-                <div>
-                  {crowdApplyPost.googleFormUrl ? (
-                    <div className="rounded-[1.2rem] border border-sky-200 bg-sky-50 px-5 py-6 text-center">
-                      <p className="text-base font-semibold text-sky-900">Google Form opened!</p>
-                      <p className="mt-1.5 text-sm leading-6 text-sky-700">
-                        Complete the form in the new tab to submit your application.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-5 py-6 text-center">
-                      <p className="text-base font-semibold text-emerald-900">Application submitted!</p>
-                      <p className="mt-1.5 text-sm leading-6 text-emerald-700">
-                        We will review your application and be in touch.
-                      </p>
-                    </div>
-                  )}
-                  <div className="mt-5">
-                    <Link
-                      href="/candidates/crowd-work"
-                      className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong"
-                    >
-                      Back to Crowd Work
-                    </Link>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {/* Instructions */}
-                  {crowdApplyPost.requirements ? (
-                    <div className="border-t border-slate-100 pt-5">
-                      <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-muted/60">
-                        Instructions
-                      </p>
-                      <FormattedJobDescription content={crowdApplyPost.requirements} />
-                    </div>
-                  ) : (
-                    <p className="border-t border-slate-100 pt-5 text-sm leading-6 text-muted">
-                      Click below to confirm your application for this task.
-                    </p>
-                  )}
+              {(() => {
+                const applyStatus = crowdApplyPostApplication?.status ?? null;
+                const isApplyLocked = applyStatus === "applied" || applyStatus === "under-review" || applyStatus === "approved" || applyStatus === "rejected";
 
-                  {/* Apply button */}
-                  <button
-                    type="button"
-                    onClick={() => void submitCrowdApply()}
-                    disabled={isSubmittingCrowdApply}
-                    className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-60"
-                  >
-                    {isSubmittingCrowdApply ? (
-                      <>
-                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                        <span>Opening…</span>
-                      </>
-                    ) : crowdApplyPost.googleFormUrl ? (
-                      <>
-                        <span>Apply — opens Google Form</span>
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" />
-                          <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" />
-                        </svg>
-                      </>
+                if (isApplyLocked) {
+                  return (
+                    <div className="border-t border-slate-100 pt-5">
+                      <div className={[
+                        "rounded-[1.2rem] border px-5 py-6 text-center",
+                        applyStatus === "approved" ? "border-emerald-200 bg-emerald-50" :
+                        applyStatus === "rejected" ? "border-rose-200 bg-rose-50" :
+                        "border-amber-200 bg-amber-50",
+                      ].join(" ")}>
+                        <p className={[
+                          "text-base font-semibold",
+                          applyStatus === "approved" ? "text-emerald-900" :
+                          applyStatus === "rejected" ? "text-rose-800" :
+                          "text-amber-900",
+                        ].join(" ")}>
+                          {crowdDetailStatusLabel[applyStatus] ?? applyStatus}
+                        </p>
+                        <p className={[
+                          "mt-1.5 text-sm leading-6",
+                          applyStatus === "approved" ? "text-emerald-700" :
+                          applyStatus === "rejected" ? "text-rose-700" :
+                          "text-amber-700",
+                        ].join(" ")}>
+                          {applyStatus === "approved"
+                            ? "Your application has been approved."
+                            : applyStatus === "rejected"
+                            ? "Your application was not successful for this task."
+                            : "Your application is being reviewed. We will be in touch."}
+                        </p>
+                      </div>
+                      <div className="mt-5">
+                        <Link href="/candidates/crowd-work" className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong">
+                          Back to Crowd Work
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (crowdApplyDone) {
+                  return (
+                    <div className="border-t border-slate-100 pt-5">
+                      {crowdApplyPost.googleFormUrl ? (
+                        <div className="rounded-[1.2rem] border border-sky-200 bg-sky-50 px-5 py-6 text-center">
+                          <p className="text-base font-semibold text-sky-900">Google Form opened!</p>
+                          <p className="mt-1.5 text-sm leading-6 text-sky-700">Complete the form in the new tab to submit your application.</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-[1.2rem] border border-emerald-200 bg-emerald-50 px-5 py-6 text-center">
+                          <p className="text-base font-semibold text-emerald-900">Application submitted!</p>
+                          <p className="mt-1.5 text-sm leading-6 text-emerald-700">We will review your application and be in touch.</p>
+                        </div>
+                      )}
+                      <div className="mt-5">
+                        <Link href="/candidates/crowd-work" className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong">
+                          Back to Crowd Work
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-6">
+                    {crowdApplyPost.requirements ? (
+                      <div className="border-t border-slate-100 pt-5">
+                        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-muted/60">Instructions</p>
+                        <FormattedJobDescription content={crowdApplyPost.requirements} />
+                      </div>
                     ) : (
-                      "Apply"
+                      <p className="border-t border-slate-100 pt-5 text-sm leading-6 text-muted">
+                        Click below to confirm your application for this task.
+                      </p>
                     )}
-                  </button>
-                </div>
-              )}
+                    <button
+                      type="button"
+                      onClick={() => void submitCrowdApply()}
+                      disabled={isSubmittingCrowdApply}
+                      className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-60"
+                    >
+                      {isSubmittingCrowdApply ? (
+                        <>
+                          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                          <span>Opening…</span>
+                        </>
+                      ) : crowdApplyPost.googleFormUrl ? (
+                        <>
+                          <span>Apply — opens Google Form</span>
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" />
+                            <path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" />
+                          </svg>
+                        </>
+                      ) : "Apply"}
+                    </button>
+                  </div>
+                );
+              })()}
             </section>
           ) : null}
         </div>
@@ -4123,8 +4229,7 @@ export function CandidatePortal({
                       key={post.id}
                       post={post}
                       isSelected={selectedBoardCrowdWork?.id === post.id}
-                      isApplied={appliedCrowdPostIds.has(post.id)}
-                      isViewed={viewedCrowdPostIds.has(post.id)}
+                      status={crowdWorkApplicationMap.get(post.id)?.status ?? null}
                       onSelect={() => {
                         setSelectedBoardCrowdWorkId(post.id);
                         setMobileCrowdWorkDrawerId(post.id);
@@ -4153,8 +4258,8 @@ export function CandidatePortal({
                   {selectedBoardCrowdWork ? (
                     <CandidateCrowdWorkDetailCard
                       post={selectedBoardCrowdWork}
-                      isApplied={appliedCrowdPostIds.has(selectedBoardCrowdWork.id)}
-                      isViewed={viewedCrowdPostIds.has(selectedBoardCrowdWork.id)}
+                      application={crowdWorkApplicationMap.get(selectedBoardCrowdWork.id) ?? null}
+                      onApply={undefined}
                     />
                   ) : null}
                 </div>
@@ -4201,8 +4306,8 @@ export function CandidatePortal({
                 {mobileCrowdWorkPost ? (
                   <CandidateCrowdWorkDetailCard
                     post={mobileCrowdWorkPost}
-                    isApplied={appliedCrowdPostIds.has(mobileCrowdWorkPost.id)}
-                    isViewed={viewedCrowdPostIds.has(mobileCrowdWorkPost.id)}
+                    application={crowdWorkApplicationMap.get(mobileCrowdWorkPost.id) ?? null}
+                    onApply={undefined}
                   />
                 ) : null}
               </div>
