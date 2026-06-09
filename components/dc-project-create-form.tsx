@@ -16,6 +16,7 @@ import {
   type DCTaskTemplate,
   type DCPrompt,
 } from "@/lib/firebase/data-collection";
+import { mirrorVideoProjectFromDataCollection } from "@/lib/firebase/video-collection";
 import { getFirebaseClientServices, isFirebaseConfigured } from "@/lib/firebase/client";
 import { isSuperAdminEmail } from "@/lib/auth/access-control";
 
@@ -37,7 +38,7 @@ function emptyPrompt(): DCPrompt {
   return { text: "", maxSeconds: 30 };
 }
 
-function emptyTask(mode: "utterance" | "conversational"): TaskDraft {
+function emptyTask(mode: "utterance" | "conversational" | "video"): TaskDraft {
   return {
     id: `t-${Math.random().toString(36).slice(2)}`,
     title: "",
@@ -52,7 +53,7 @@ function emptyTask(mode: "utterance" | "conversational"): TaskDraft {
 }
 
 interface FormState {
-  recordingMode: "utterance" | "conversational";
+  recordingMode: "utterance" | "conversational" | "video";
   name: string;
   client: string;
   summary: string;
@@ -226,13 +227,16 @@ function ModeCard({
   disabled,
   onSelect,
 }: {
-  mode: "utterance" | "conversational";
+  mode: "utterance" | "conversational" | "video";
   selected: boolean;
   disabled?: boolean;
   onSelect: () => void;
 }) {
   const isUtterance = mode === "utterance";
-  const tags = isUtterance
+  const isVideo = mode === "video";
+  const tags = isVideo
+    ? ["Video", "Scheduling", "Two-person slots"]
+    : isUtterance
     ? ["Solo recording", "Prompt-by-prompt", "Per-prompt time cap"]
     : ["Multi-device", "Like a phone call", "Hour-based progress"];
 
@@ -255,17 +259,19 @@ function ModeCard({
           selected ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-500",
         ].join(" ")}
       >
-        {isUtterance ? "🎙" : "🗣"}
+        {isVideo ? "📹" : isUtterance ? "🎙" : "🗣"}
       </div>
 
       <div className="flex-1">
         <p className="text-sm font-semibold text-ink">
-          {isUtterance ? "Utterance" : "Conversational"}
+          {isVideo ? "Video Collection" : isUtterance ? "Utterance" : "Conversational"}
         </p>
         <p className="mt-1 text-xs leading-5 text-muted">
-          {isUtterance
-            ? "One speaker reads prompts individually. Progress tracked by prompt count."
-            : "2+ speakers talk to each other across devices. Progress tracked by hours."}
+          {isVideo
+            ? "Participants submit availability and admins fill two-person video meetings."
+            : isUtterance
+              ? "One speaker reads prompts individually. Progress tracked by prompt count."
+              : "2+ speakers talk to each other across devices. Progress tracked by hours."}
         </p>
       </div>
 
@@ -637,7 +643,9 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
               maxDurationSeconds: t.maxDurationSeconds,
               speakersRequired: t.speakersRequired,
             }))
-          : [emptyTask(project.recordingMode)],
+          : project.recordingMode === "video"
+            ? []
+            : [emptyTask(project.recordingMode)],
       });
       setProjectLoading(false);
     });
@@ -647,8 +655,8 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function setMode(mode: "utterance" | "conversational") {
-    setForm((f) => ({ ...f, recordingMode: mode, tasks: [emptyTask(mode)] }));
+  function setMode(mode: "utterance" | "conversational" | "video") {
+    setForm((f) => ({ ...f, recordingMode: mode, tasks: mode === "video" ? [] : [emptyTask(mode)] }));
   }
 
   function setLangField(i: number, field: keyof DCLanguageEntry, value: string[]) {
@@ -674,9 +682,11 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
         description: form.summary.trim(),
         summary: form.summary.trim(),
         projectType:
-          form.recordingMode === "conversational"
-            ? "Data Collection: Conversational Audio"
-            : "Data Collection: Audio",
+          form.recordingMode === "video"
+            ? "Data Collection: Video"
+            : form.recordingMode === "conversational"
+              ? "Data Collection: Conversational Audio"
+              : "Data Collection: Audio",
         appsSupported: [],
         deadline: form.deadline,
         languages: form.languages.filter((l) => l.languages.length > 0),
@@ -693,13 +703,18 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
         totalAssetsPerJob: form.tasks.length,
         tatReworkHours: form.tatReworkHours,
         tatReworkMins: 0,
-        jobType: form.recordingMode === "conversational" ? "Conversational" : "Utterance",
+        jobType:
+          form.recordingMode === "video"
+            ? "Video Collection"
+            : form.recordingMode === "conversational"
+              ? "Conversational"
+              : "Utterance",
         isConversational: form.recordingMode === "conversational",
         recordingMode: form.recordingMode,
         descriptionHtml: form.descriptionHtml,
         guidelinesHtml: form.guidelinesHtml,
         submissionPolicyHtml: form.submissionPolicyHtml,
-        tasks: form.tasks.map<DCTaskTemplate>((t) => ({
+        tasks: form.recordingMode === "video" ? [] : form.tasks.map<DCTaskTemplate>((t) => ({
           id: t.id,
           title: t.title.trim(),
           guidelinesHtml: t.guidelinesHtml,
@@ -715,8 +730,8 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
         })),
         dialect: form.languages[0]?.languages[0] ?? "",
         domainSplit: "",
-        minDuration: Math.min(...form.tasks.map((t) => t.minDurationSeconds)),
-        maxDuration: Math.max(...form.tasks.map((t) => t.maxDurationSeconds)),
+        minDuration: form.tasks.length ? Math.min(...form.tasks.map((t) => t.minDurationSeconds)) : 0,
+        maxDuration: form.tasks.length ? Math.max(...form.tasks.map((t) => t.maxDurationSeconds)) : 0,
         audioFormat: { format: "WAV", bitDepth: "16-bit PCM", sampleRate: "48kHz" },
         transcriptionRequired: form.transcriptionRequired,
         qaRequired: form.qaRequired,
@@ -729,8 +744,24 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
 
       if (isEdit && projectId) {
         await updateDCProject(projectId, input);
+        if (form.recordingMode === "video") {
+          await mirrorVideoProjectFromDataCollection({
+            projectId,
+            title: form.name,
+            jobDescription: form.descriptionHtml || form.summary,
+            companyName: form.client,
+          });
+        }
       } else {
-        await createDCProject(input);
+        const nextProjectId = await createDCProject(input);
+        if (form.recordingMode === "video") {
+          await mirrorVideoProjectFromDataCollection({
+            projectId: nextProjectId,
+            title: form.name,
+            jobDescription: form.descriptionHtml || form.summary,
+            companyName: form.client,
+          });
+        }
       }
       router.push("/super?view=data-collection&section=projects");
     } catch (err) {
@@ -818,6 +849,12 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
                   selected={form.recordingMode === "conversational"}
                   disabled={isEdit}
                   onSelect={() => setMode("conversational")}
+                />
+                <ModeCard
+                  mode="video"
+                  selected={form.recordingMode === "video"}
+                  disabled={isEdit}
+                  onSelect={() => setMode("video")}
                 />
               </div>
               {isEdit && (
@@ -942,6 +979,7 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
             </Card>
 
             {/* ── Tasks ── */}
+            {form.recordingMode !== "video" ? (
             <Card
               title={form.recordingMode === "utterance" ? "Tasks & Prompts" : "Tasks & Scenarios"}
               description={
@@ -981,6 +1019,16 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
                 + Add task
               </button>
             </Card>
+            ) : (
+              <Card
+                title="Video Collection Scheduling"
+                description="Video projects use the Data Collection project shell and the scheduling panel below Projects for participants and meetings."
+              >
+                <div className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4 text-sm leading-7 text-muted">
+                  Add the project name, client, job description, languages, and quotas here. After saving, use the Video Collection panel in Projects to add participants and fill meetings.
+                </div>
+              </Card>
+            )}
 
             {/* ── Volume & Quota ── */}
             <Card

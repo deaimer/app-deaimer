@@ -623,7 +623,7 @@ export function AdminPortalWorkspace({
 
   const selectedDCSection =
     selectedServiceSlug === "data-collection-sourcing"
-      ? ((["projects", "speakers", "sessions"].includes(
+      ? ((["projects", "speakers", "sessions", "video"].includes(
             requestedSection ?? "",
           )
             ? requestedSection

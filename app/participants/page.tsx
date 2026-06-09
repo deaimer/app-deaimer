@@ -1,13 +1,10 @@
 import { Suspense } from "react";
-import { DeaimerSiteShell } from "@/components/deaimer-site-shell";
-import { GoogleRoleOnboarding } from "@/components/google-role-onboarding";
+import { ParticipantsPortal } from "@/components/participants-portal";
 
 export default function ParticipantsPage() {
   return (
-    <DeaimerSiteShell>
-      <Suspense fallback={null}>
-        <GoogleRoleOnboarding role="participants" />
-      </Suspense>
-    </DeaimerSiteShell>
+    <Suspense fallback={null}>
+      <ParticipantsPortal />
+    </Suspense>
   );
 }

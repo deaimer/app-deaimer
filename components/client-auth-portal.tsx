@@ -27,9 +27,17 @@ import {
   getPortalProfile,
   savePortalProfile,
 } from "@/lib/firebase/user-profiles";
+import { ClientVideoProgressPanel } from "@/components/client-video-progress-panel";
 
 type EmailMode = "signup" | "signin";
-type ClientView = "overview" | "data" | "projects" | "requests" | "profile" | "settings";
+type ClientView =
+  | "overview"
+  | "data"
+  | "projects"
+  | "requests"
+  | "scheduling"
+  | "profile"
+  | "settings";
 
 const emptyDraft: PortalProfileDraft = {
   fullName: "",
@@ -60,6 +68,7 @@ const clientNavItems: Array<{
   { id: "data", label: "Data", shortLabel: "DT" },
   { id: "projects", label: "Projects", shortLabel: "PR" },
   { id: "requests", label: "Requests", shortLabel: "RQ" },
+  { id: "scheduling", label: "Scheduling", shortLabel: "SC" },
   { id: "profile", label: "Profile", shortLabel: "PF" },
   { id: "settings", label: "Settings", shortLabel: "ST" },
 ];
@@ -94,7 +103,7 @@ function ClientWorkspacePanel({
   approval,
   onOpenProfile,
 }: {
-  view: Exclude<ClientView, "profile">;
+  view: Exclude<ClientView, "profile" | "scheduling">;
   profile: PortalProfile;
   approval: ClientApprovalRecord | null;
   onOpenProfile: () => void;
@@ -222,7 +231,7 @@ function ClientWorkspacePanel({
   }
 
   const viewContent: Record<
-    Exclude<ClientView, "overview" | "profile">,
+    Exclude<ClientView, "overview" | "profile" | "scheduling">,
     { title: string; intro: string; items: string[] }
   > = {
     data: {
@@ -937,6 +946,8 @@ export function ClientAuthPortal() {
                   onChange={onDraftChange}
                   onSubmit={onProfileSubmit}
                 />
+              ) : activeView === "scheduling" ? (
+                <ClientVideoProgressPanel clientEmail={activeUser.email} />
               ) : (
                 <ClientWorkspacePanel
                   view={activeView}

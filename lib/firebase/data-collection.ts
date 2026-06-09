@@ -59,7 +59,7 @@ export interface DCProject {
   languages: DCLanguageEntry[];
   jobType: string;
   isConversational: boolean;
-  recordingMode: "utterance" | "conversational";
+  recordingMode: "utterance" | "conversational" | "video";
   // Volume & job config
   targetHours: number;
   estimatedJobs: number;
@@ -261,9 +261,12 @@ function mapProject(data: DocumentData, id: string): DCProject {
       : [],
     jobType: String(data.jobType ?? ""),
     isConversational: Boolean(data.isConversational ?? false),
-    recordingMode: (data.recordingMode === "conversational" || Boolean(data.isConversational))
-      ? "conversational"
-      : "utterance",
+    recordingMode:
+      data.recordingMode === "video"
+        ? "video"
+        : (data.recordingMode === "conversational" || Boolean(data.isConversational))
+          ? "conversational"
+          : "utterance",
     estimatedJobs: Number(data.estimatedJobs ?? 0),
     maxQuotaHours: Number(data.maxQuotaHours ?? 0),
     maxQuotaMinutes: Number(data.maxQuotaMinutes ?? 0),

@@ -1,5 +1,5 @@
 import type { User } from "firebase/auth";
-import { DocumentData, doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { DocumentData, deleteDoc, doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { getLockedProfileEmail } from "@/lib/auth/access-control";
 import type { PortalRole } from "@/lib/auth/portal-config";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
@@ -118,4 +118,8 @@ export async function savePortalProfile(user: User, role: PortalRole, draft: Por
   );
 
   return getPortalProfile(user.uid, role);
+}
+
+export async function deletePortalProfile(uid: string, role: PortalRole) {
+  await deleteDoc(buildProfileRef(uid, role));
 }

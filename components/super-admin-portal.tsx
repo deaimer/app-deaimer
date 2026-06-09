@@ -95,6 +95,7 @@ import {
   type EvalTranscriptionSection,
 } from "@/components/eval-transcription-panel";
 import { CrowdWorkAdminPanel } from "@/components/crowd-work-admin-panel";
+import { ClientCompaniesPanel } from "@/components/client-companies-panel";
 
 type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection" | "evaluation-transcription" | "crowd-work";
 type AccessTarget = "clients" | "admins" | "super";
@@ -2923,35 +2924,40 @@ export function SuperAdminPortal({
                 ) : null}
               </>
             ) : activeView === "access" ? (
-              <AccessPanel
-                target={activeAccessTarget}
-                accessMode={activeAccessMode}
-                approvals={activeApprovals}
-                draft={approvalDraft}
-                isSaving={isSavingApproval}
-                isLoading={activeApprovalsLoading}
-                message={approvalMessage}
-                error={errorMessage}
-                superAdmins={superAdmins}
-                activeUserEmail={normalizeEmail(activeUser.email)}
-                superAdminError={superAdminError}
-                isSavingSuperAdmin={isSavingSuperAdmin}
-                removingSuperEmail={removingSuperEmail}
-                editingAdminEmail={editingAdminEmail}
-                deletingAdminEmail={deletingAdminEmail}
-                onTargetChange={handleAccessTargetChange}
-                onAccessModeChange={handleAccessModeChange}
-                onAddApproval={handleAddApprovalPage}
-                onChange={handleApprovalDraftChange}
-                onAdminDefaultChange={handleAdminDefaultChange}
-                onSubmit={handleApprovalSubmit}
-                onToggleServicePermission={handleToggleServicePermission}
-                onEditAdmin={handleStartEditAdminApproval}
-                onDeleteAdmin={handleDeleteAdminApproval}
-                onCancelAdminEdit={handleCancelAdminEdit}
-                onAddSuperAdmin={handleAddSuperAdmin}
-                onRemoveSuperAdmin={handleRemoveSuperAdmin}
-              />
+              <>
+                <AccessPanel
+                  target={activeAccessTarget}
+                  accessMode={activeAccessMode}
+                  approvals={activeApprovals}
+                  draft={approvalDraft}
+                  isSaving={isSavingApproval}
+                  isLoading={activeApprovalsLoading}
+                  message={approvalMessage}
+                  error={errorMessage}
+                  superAdmins={superAdmins}
+                  activeUserEmail={normalizeEmail(activeUser.email)}
+                  superAdminError={superAdminError}
+                  isSavingSuperAdmin={isSavingSuperAdmin}
+                  removingSuperEmail={removingSuperEmail}
+                  editingAdminEmail={editingAdminEmail}
+                  deletingAdminEmail={deletingAdminEmail}
+                  onTargetChange={handleAccessTargetChange}
+                  onAccessModeChange={handleAccessModeChange}
+                  onAddApproval={handleAddApprovalPage}
+                  onChange={handleApprovalDraftChange}
+                  onAdminDefaultChange={handleAdminDefaultChange}
+                  onSubmit={handleApprovalSubmit}
+                  onToggleServicePermission={handleToggleServicePermission}
+                  onEditAdmin={handleStartEditAdminApproval}
+                  onDeleteAdmin={handleDeleteAdminApproval}
+                  onCancelAdminEdit={handleCancelAdminEdit}
+                  onAddSuperAdmin={handleAddSuperAdmin}
+                  onRemoveSuperAdmin={handleRemoveSuperAdmin}
+                />
+                {activeAccessTarget === "clients" && activeAccessMode === "list" ? (
+                  <ClientCompaniesPanel activeUser={activeUser} />
+                ) : null}
+              </>
             ) : activeView === "workforce" ? (
               activeWorkforceSection === "partners" ? (
                 <GlobalWorkforcePanel activeUser={activeUser} />

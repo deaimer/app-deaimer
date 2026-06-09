@@ -48,6 +48,7 @@ import {
   generateQAReportCSV,
   generateTranscriptionJSON,
 } from "@/lib/ops-exports";
+import { VideoCollectionAdminPanel } from "@/components/video-collection-admin-panel";
 
 export type DCAdminSection =
   | "projects"
@@ -55,7 +56,8 @@ export type DCAdminSection =
   | "sessions"
   | "transcription"
   | "qa-review"
-  | "delivery";
+  | "delivery"
+  | "video";
 
 interface DataCollectionAdminPanelProps {
   activeUser: User;
@@ -2642,12 +2644,15 @@ function DeliverySection({ activeUser: _user }: { activeUser: User }) {
 export function DataCollectionAdminPanel({ activeUser, activeSection, isSuperAdmin }: DataCollectionAdminPanelProps) {
   return (
     <div>
-      {activeSection === "projects" && <ProjectsSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
+      {activeSection === "projects" && (
+        <ProjectsSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />
+      )}
       {activeSection === "speakers" && <SpeakersSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "sessions" && <SessionsSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "transcription" && <TranscriptionSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "qa-review" && <QAReviewSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "delivery" && (isSuperAdmin ? <DeliverySection activeUser={activeUser} /> : <EmptyState message="Delivery is only available to super admins." />)}
+      {activeSection === "video" && <VideoCollectionAdminPanel activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
     </div>
   );
 }
