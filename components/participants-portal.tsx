@@ -72,6 +72,15 @@ const SESSION_STATUS_CFG: Record<VideoMeetingClientStatus, { label: string; cls:
 };
 
 const emptyEmailForm = { email: "", password: "", confirmPassword: "" };
+
+function isSlotExpired(slotId: string): boolean {
+  const m = /^(\d{4}-\d{2}-\d{2})-(.+)$/.exec(slotId);
+  if (!m) return false;
+  const [, date, time] = m;
+  const [y, mo, d] = date.split("-").map(Number);
+  const hour = time === "9AM" ? 9 : time === "11AM" ? 11 : time === "1PM" ? 13 : 0;
+  return new Date(y, mo - 1, d, hour + 1) < new Date();
+}
 const emptyDraft: PortalProfileDraft = {
   firstName: "",
   lastName: "",
@@ -329,7 +338,7 @@ function ParticipantProfileForm({
 
 const SLOT_TIME_LABELS = ["9AM", "11AM", "1PM"] as const;
 
-type SlotVariant = "selected" | "full" | "notAllowed" | "popular" | "open" | "disabled";
+type SlotVariant = "selected" | "full" | "notAllowed" | "popular" | "open" | "disabled" | "locked";
 
 const SLOT_BTN_CLS: Record<SlotVariant, string> = {
   selected:   "border-primary bg-primary text-white shadow-sm",
@@ -338,6 +347,7 @@ const SLOT_BTN_CLS: Record<SlotVariant, string> = {
   popular:    "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100",
   open:       "border-slate-200 bg-white text-slate-500 hover:border-primary/50 hover:text-primary",
   disabled:   "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300",
+  locked:     "cursor-not-allowed border-blue-200 bg-blue-50 text-blue-700",
 };
 
 function SlotGrid({
@@ -348,6 +358,7 @@ function SlotGrid({
   slotDemand,
   slotNames,
   conflictedSlots,
+  lockedSlotIds,
   onSlotClick,
   isLoading,
 }: {
@@ -358,6 +369,7 @@ function SlotGrid({
   slotDemand: Record<string, number>;
   slotNames: Record<string, string>;
   conflictedSlots: Set<string>;
+  lockedSlotIds: Set<string>;
   onSlotClick: (slotId: string) => void;
   isLoading?: boolean;
 }) {
@@ -390,15 +402,18 @@ function SlotGrid({
     const isLimitReached = slot1 !== null && slot2 !== null && !isSelectedByMe;
     const isSameAsStep1 = step === 2 && slot.id === slot1;
 
+    const isLocked = lockedSlotIds.has(slot.id);
+
     let variant: SlotVariant;
-    if (isStep1 || isStep2) variant = "selected";
+    if (isLocked) variant = "locked";
+    else if (isStep1 || isStep2) variant = "selected";
     else if (isFull) variant = "full";
     else if (isConflicted) variant = "notAllowed";
     else if (isLimitReached || isSameAsStep1) variant = "disabled";
     else if (demand === 1) variant = "popular";
     else variant = "open";
 
-    const isClickable = variant !== "full" && variant !== "disabled" && variant !== "notAllowed";
+    const isClickable = variant !== "full" && variant !== "disabled" && variant !== "notAllowed" && variant !== "locked";
     const peerName = slotNames[slot.id];
     const selLabel = isStep1 ? "Session 1" : "Session 2";
 
@@ -502,13 +517,31 @@ function ParticipantScheduleWorkspace({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const lockedSlotIds = useMemo(() => {
+    const locked = new Set<string>();
+    (assignment?.meetings ?? []).forEach((m) => { if (m.meetingUrl) locked.add(m.slotId); });
+    return locked;
+  }, [assignment]);
+
   useEffect(() => {
     if (!assignment) return;
     const saved = assignment.participant.selectedSlotIds;
-    setSlot1(saved[0] ?? null);
-    setSlot2(saved[1] ?? null);
+    const locked = new Set<string>();
+    assignment.meetings.forEach((m) => { if (m.meetingUrl) locked.add(m.slotId); });
+    const hasMeeting = (sid: string) => assignment.meetings.some((m) => m.slotId === sid);
+
+    let initSlot1 = saved[0] ?? null;
+    let initSlot2 = saved[1] ?? null;
+
+    // Clear expired+unmatched slots (not locked by client URL)
+    if (initSlot1 && !locked.has(initSlot1) && isSlotExpired(initSlot1) && !hasMeeting(initSlot1)) initSlot1 = null;
+    if (initSlot2 && !locked.has(initSlot2) && isSlotExpired(initSlot2) && !hasMeeting(initSlot2)) initSlot2 = null;
+
+    setSlot1(initSlot1);
+    setSlot2(initSlot2);
     setNotes(assignment.participant.schedulingNotes);
-    setStep(saved.length >= 1 ? 2 : 1);
+    // Start at step 1 if slot1 is empty (and it's not a locked slot), else step 2
+    setStep(!initSlot1 && !locked.has(saved[0] ?? "") ? 1 : 2);
   }, [assignment?.project.id]);
 
   useEffect(() => {
@@ -571,11 +604,14 @@ function ParticipantScheduleWorkspace({
   }, [slot1, pairings]);
 
   function handleSlotClick(slotId: string) {
+    if (lockedSlotIds.has(slotId)) return;
     const demand = slotDemand[slotId] ?? 0;
     if (demand >= 2) return;
     if (step === 1) {
+      if (lockedSlotIds.has(slot1 ?? "")) return; // slot1 is locked, skip
       setSlot1((cur) => (cur === slotId ? null : slotId));
     } else {
+      if (lockedSlotIds.has(slot2 ?? "")) return; // slot2 is locked, skip
       if (slotId === slot1) return;
       if (conflictedSlots.has(slotId)) return;
       setSlot2((cur) => (cur === slotId ? null : slotId));
@@ -683,6 +719,7 @@ function ParticipantScheduleWorkspace({
         slotDemand={slotDemand}
         slotNames={slotNames}
         conflictedSlots={conflictedSlots}
+        lockedSlotIds={lockedSlotIds}
         onSlotClick={handleSlotClick}
         isLoading={isLoadingDemand}
       />
@@ -831,6 +868,19 @@ function ParticipantProjectsView({
     const description = project.jobDescription.replace(/<[^>]*>/g, "").trim();
     const hasMeetings = meetings.length > 0;
 
+    // Locked = client has added a meeting URL for that slot
+    const lockedSlotSet = new Set(meetings.filter((m) => m.meetingUrl).map((m) => m.slotId));
+    const isS1Locked = !!(s1 && lockedSlotSet.has(s1));
+    const isS2Locked = !!(s2 && lockedSlotSet.has(s2));
+    const allSessionsLocked = isS1Locked && isS2Locked;
+
+    // Expired+unmatched = past their time with no meeting booked
+    const hasMeetingForSlot = (sid: string) => meetings.some((m) => m.slotId === sid);
+    const expiredSlots = [s1, s2].filter((sid): sid is string =>
+      !!sid && !lockedSlotSet.has(sid) && isSlotExpired(sid) && !hasMeetingForSlot(sid)
+    );
+    const hasExpiredSlots = expiredSlots.length > 0;
+
     return (
       <div className="space-y-4 pt-4">
         <button
@@ -911,13 +961,26 @@ function ParticipantProjectsView({
               </div>
             ) : null}
 
-            <button
-              type="button"
-              onClick={() => setScheduleOpen(true)}
-              className="mt-4 rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-muted transition hover:border-slate-300"
-            >
-              Change sessions
-            </button>
+            {hasExpiredSlots && (
+              <div className="mt-4 rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {expiredSlots.length === 1
+                  ? "One of your sessions passed without a match. Please select a new time slot."
+                  : "Both sessions passed without a match. Please select new time slots."}
+              </div>
+            )}
+            {!allSessionsLocked && (
+              <button
+                type="button"
+                onClick={() => setScheduleOpen(true)}
+                className={`mt-4 rounded-full border px-5 py-2.5 text-sm font-medium transition ${
+                  hasExpiredSlots
+                    ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                    : "border-slate-200 bg-white text-muted hover:border-slate-300"
+                }`}
+              >
+                {hasExpiredSlots ? "Reschedule now →" : "Change sessions"}
+              </button>
+            )}
           </section>
         ) : (
           <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8">

@@ -588,9 +588,16 @@ function ProjectListView({
 
   return (
     <div className="space-y-5 pt-4">
-      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primarySoft">Workspace</p>
-        <h1 className="mt-2 text-3xl font-semibold text-ink">Projects</h1>
+      <section className="relative overflow-hidden rounded-[1.75rem] bg-gradient-to-br from-primary to-primaryStrong px-8 py-10 sm:px-10 sm:py-12">
+        <div className="relative z-10">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/60">Workspace</p>
+          <h1 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">Projects</h1>
+          <p className="mt-3 max-w-lg text-sm leading-7 text-white/75">
+            View and manage your company's video collection projects and session scheduling.
+          </p>
+        </div>
+        <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-white/10" />
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-8 right-16 h-32 w-32 rounded-full bg-white/5" />
       </section>
 
       {loading ? (
