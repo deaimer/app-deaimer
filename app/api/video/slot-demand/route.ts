@@ -31,6 +31,8 @@ export async function GET(req: NextRequest) {
 
     const demand: Record<string, number> = {};
     const pairings: [string, string][] = [];
+    // slotId → list of first names of OTHER participants who booked it
+    const slotBookerNames: Record<string, string[]> = {};
 
     for (const doc of participantsSnap.docs) {
       const docUid = String(doc.data().uid ?? doc.id);
@@ -38,15 +40,29 @@ export async function GET(req: NextRequest) {
       const slots: string[] = Array.isArray(doc.data().selectedSlotIds)
         ? doc.data().selectedSlotIds.map(String).filter(Boolean)
         : [];
+
+      // Derive first name: prefer stored firstName, else parse fullName
+      const storedFirst = String(doc.data().firstName ?? "").trim();
+      const fullName = String(doc.data().fullName ?? "").trim();
+      const firstName = storedFirst || fullName.split(/\s+/)[0] || "Someone";
+
       for (const slotId of slots) {
         demand[slotId] = (demand[slotId] ?? 0) + 1;
+        if (!slotBookerNames[slotId]) slotBookerNames[slotId] = [];
+        slotBookerNames[slotId].push(firstName);
       }
       if (slots.length >= 2) {
         pairings.push([slots[0], slots[1]]);
       }
     }
 
-    return NextResponse.json({ demand, pairings });
+    // Only expose a name when exactly 1 other participant booked the slot
+    const slotNames: Record<string, string> = {};
+    for (const [slotId, names] of Object.entries(slotBookerNames)) {
+      if (names.length === 1) slotNames[slotId] = names[0];
+    }
+
+    return NextResponse.json({ demand, pairings, slotNames });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Server error" },

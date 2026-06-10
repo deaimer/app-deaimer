@@ -29,12 +29,13 @@ export async function GET(req: NextRequest) {
   try {
     const db = adminFirestore();
 
-    // Fetch all projects, then for each check if this user is a participant.
-    // Participant doc ID is `uid || email` (see addVideoProjectParticipant).
-    // No collectionGroup index needed — direct document gets only.
     const projectsSnap = await db.collection("videoProjects").get();
 
-    const assignments: Array<{ project: Record<string, unknown>; participant: Record<string, unknown> }> = [];
+    const assignments: Array<{
+      project: Record<string, unknown>;
+      participant: Record<string, unknown>;
+      meetings: Record<string, unknown>[];
+    }> = [];
 
     await Promise.all(
       projectsSnap.docs.map(async (projectDoc) => {
@@ -51,6 +52,29 @@ export async function GET(req: NextRequest) {
 
         const data = found.data()!;
         const pd = projectDoc.data();
+
+        const selectedSlotIds: string[] = Array.isArray(data.selectedSlotIds)
+          ? data.selectedSlotIds.map(String).filter(Boolean)
+          : [];
+
+        // Fetch meeting records for the participant's confirmed slots
+        let meetings: Record<string, unknown>[] = [];
+        if (selectedSlotIds.length > 0) {
+          const meetingsSnap = await db
+            .collection(`videoProjects/${projectId}/meetings`)
+            .where("slotId", "in", selectedSlotIds)
+            .get();
+          meetings = meetingsSnap.docs.map((m) => ({
+            id: m.id,
+            slotId: String(m.data().slotId ?? ""),
+            meetingUrl: String(m.data().meetingUrl ?? ""),
+            clientStatus: String(m.data().clientStatus ?? "under_review"),
+            participantAUid: String(m.data().participantAUid ?? ""),
+            participantBUid: String(m.data().participantBUid ?? ""),
+            participantAName: String(m.data().participantAName ?? ""),
+            participantBName: String(m.data().participantBName ?? ""),
+          }));
+        }
 
         assignments.push({
           project: {
@@ -72,9 +96,10 @@ export async function GET(req: NextRequest) {
             source: data.source === "super" ? "super" : "admin",
             addedByEmail: normalizeEmail(data.addedByEmail),
             addedByUid: String(data.addedByUid ?? ""),
-            selectedSlotIds: Array.isArray(data.selectedSlotIds) ? data.selectedSlotIds.map(String) : [],
+            selectedSlotIds,
             schedulingNotes: String(data.schedulingNotes ?? ""),
           },
+          meetings,
         });
       }),
     );

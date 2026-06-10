@@ -428,8 +428,12 @@ function buildSyncedPortalProfileDraft(
   workspaceDraft: AdminWorkspaceProfileDraft,
   fallbackPortalProfile: PortalProfile | null,
 ) {
+  const fullName = workspaceDraft.identity.fullName.trim();
+  const [parsedFirst = "", ...rest] = fullName.split(/\s+/);
   return {
-    fullName: workspaceDraft.identity.fullName.trim(),
+    firstName: parsedFirst,
+    lastName: rest.join(" "),
+    fullName,
     email: workspaceDraft.identity.workEmail.trim() || activeUser.email || "",
     phone: workspaceDraft.identity.phone.trim(),
     organization: [

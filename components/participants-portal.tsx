@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import type { User } from "firebase/auth";
@@ -31,17 +32,49 @@ import {
 } from "@/lib/firebase/user-profiles";
 import {
   VIDEO_SCHEDULE_SLOTS,
+  VideoMeetingClientStatus,
   VideoProjectParticipant,
   getVideoSlot,
   saveMyVideoAvailability,
   type VideoProject,
 } from "@/lib/firebase/video-collection";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type ParticipantView = "home" | "projects" | "profile" | "settings";
 type EmailMode = "signup" | "signin";
 
+type SlotMeeting = {
+  id: string;
+  slotId: string;
+  meetingUrl: string;
+  clientStatus: VideoMeetingClientStatus;
+  participantAUid: string;
+  participantBUid: string;
+  participantAName: string;
+  participantBName: string;
+};
+
+type Assignment = {
+  project: VideoProject;
+  participant: VideoProjectParticipant;
+  meetings: SlotMeeting[];
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const SESSION_STATUS_CFG: Record<VideoMeetingClientStatus, { label: string; cls: string }> = {
+  under_review:     { label: "Under Review",     cls: "border-amber-200 bg-amber-50 text-amber-800" },
+  meeting_booked:   { label: "Meeting Booked",   cls: "border-blue-200 bg-blue-50 text-blue-800" },
+  session_approved: { label: "Session Approved", cls: "border-emerald-200 bg-emerald-50 text-emerald-800" },
+  session_rejected: { label: "Session Rejected", cls: "border-rose-200 bg-rose-50 text-rose-800" },
+  no_show_up:       { label: "No Show Up",       cls: "border-slate-200 bg-slate-100 text-slate-600" },
+};
+
 const emptyEmailForm = { email: "", password: "", confirmPassword: "" };
 const emptyDraft: PortalProfileDraft = {
+  firstName: "",
+  lastName: "",
   fullName: "",
   email: "",
   phone: "",
@@ -58,6 +91,19 @@ const emptyDraft: PortalProfileDraft = {
 const fieldClass =
   "w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary disabled:cursor-not-allowed disabled:bg-slate-100";
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: VideoMeetingClientStatus }) {
+  const { label, cls } = SESSION_STATUS_CFG[status];
+  return <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${cls}`}>{label}</span>;
+}
+
+function getPartnerName(meeting: SlotMeeting, myUid: string): string {
+  return meeting.participantAUid === myUid ? meeting.participantBName : meeting.participantAName;
+}
+
+// ─── Google icon ──────────────────────────────────────────────────────────────
+
 function GoogleMark() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5">
@@ -68,6 +114,8 @@ function GoogleMark() {
     </svg>
   );
 }
+
+// ─── Profile form ─────────────────────────────────────────────────────────────
 
 function ParticipantProfileForm({
   draft,
@@ -141,7 +189,8 @@ function ParticipantProfileForm({
           <p className="text-sm font-semibold text-ink">Identity</p>
           <dl className="mt-3">
             {[
-              ["Full name", profile.fullName || "Not added"],
+              ["First name", profile.firstName || profile.fullName.split(" ")[0] || "Not added"],
+              ["Last name", profile.lastName || profile.fullName.split(" ").slice(1).join(" ") || "Not added"],
               ["Email", profile.email || activeUser?.email || "Not added"],
               ["Country", profileCountry || "Not added"],
               ["City", profileCity || "Not added"],
@@ -196,8 +245,12 @@ function ParticipantProfileForm({
 
         <div className="grid gap-4 md:grid-cols-2">
           <label>
-            <span className="mb-2 block text-sm font-medium text-ink">Full name</span>
-            <input name="fullName" value={draft.fullName} onChange={onChange} required className={fieldClass} />
+            <span className="mb-2 block text-sm font-medium text-ink">First name</span>
+            <input name="firstName" value={draft.firstName} onChange={onChange} required placeholder="First name" className={fieldClass} />
+          </label>
+          <label>
+            <span className="mb-2 block text-sm font-medium text-ink">Last name</span>
+            <input name="lastName" value={draft.lastName} onChange={onChange} required placeholder="Last name" className={fieldClass} />
           </label>
           <label>
             <span className="mb-2 block text-sm font-medium text-ink">Email</span>
@@ -272,6 +325,20 @@ function ParticipantProfileForm({
   );
 }
 
+// ─── Slot grid ────────────────────────────────────────────────────────────────
+
+const SLOT_TIME_LABELS = ["9AM", "11AM", "1PM"] as const;
+
+type SlotVariant = "selected" | "full" | "notAllowed" | "popular" | "open" | "disabled";
+
+const SLOT_BTN_CLS: Record<SlotVariant, string> = {
+  selected:   "border-primary bg-primary text-white shadow-sm",
+  full:       "cursor-not-allowed border-rose-200 bg-rose-50 text-rose-500",
+  notAllowed: "cursor-not-allowed border-rose-200 bg-rose-50 text-rose-400",
+  popular:    "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100",
+  open:       "border-slate-200 bg-white text-slate-500 hover:border-primary/50 hover:text-primary",
+  disabled:   "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300",
+};
 
 function SlotGrid({
   days,
@@ -279,6 +346,7 @@ function SlotGrid({
   slot2,
   step,
   slotDemand,
+  slotNames,
   conflictedSlots,
   onSlotClick,
   isLoading,
@@ -288,6 +356,7 @@ function SlotGrid({
   slot2: string | null;
   step: 1 | 2;
   slotDemand: Record<string, number>;
+  slotNames: Record<string, string>;
   conflictedSlots: Set<string>;
   onSlotClick: (slotId: string) => void;
   isLoading?: boolean;
@@ -308,89 +377,106 @@ function SlotGrid({
     );
   }
 
+  function renderSlotBtn(
+    slot: (typeof VIDEO_SCHEDULE_SLOTS)[number],
+    timeLabel?: string,
+  ) {
+    const demand = slotDemand[slot.id] ?? 0;
+    const isStep1 = slot.id === slot1;
+    const isStep2 = slot.id === slot2;
+    const isSelectedByMe = isStep1 || isStep2;
+    const isFull = demand >= 2 && !isSelectedByMe;
+    const isConflicted = step === 2 && !isSelectedByMe && conflictedSlots.has(slot.id);
+    const isLimitReached = slot1 !== null && slot2 !== null && !isSelectedByMe;
+    const isSameAsStep1 = step === 2 && slot.id === slot1;
+
+    let variant: SlotVariant;
+    if (isStep1 || isStep2) variant = "selected";
+    else if (isFull) variant = "full";
+    else if (isConflicted) variant = "notAllowed";
+    else if (isLimitReached || isSameAsStep1) variant = "disabled";
+    else if (demand === 1) variant = "popular";
+    else variant = "open";
+
+    const isClickable = variant !== "full" && variant !== "disabled" && variant !== "notAllowed";
+    const peerName = slotNames[slot.id];
+    const selLabel = isStep1 ? "Session 1" : "Session 2";
+
+    return (
+      <button
+        key={slot.id}
+        type="button"
+        disabled={!isClickable}
+        onClick={() => onSlotClick(slot.id)}
+        className={`inline-flex w-full flex-col items-center justify-center gap-0.5 rounded-xl border py-3 text-[11px] font-semibold transition ${SLOT_BTN_CLS[variant]}`}
+      >
+        {/* Time label shown inside the button on mobile */}
+        {timeLabel ? (
+          <span className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${variant === "selected" ? "opacity-75" : "opacity-50"}`}>
+            {timeLabel}
+          </span>
+        ) : null}
+
+        {variant === "selected" ? (
+          <>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 12 12">
+              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>{selLabel}</span>
+          </>
+        ) : variant === "full" ? (
+          <span>Full</span>
+        ) : variant === "notAllowed" ? (
+          <>
+            <span>Not</span>
+            <span>Allowed</span>
+          </>
+        ) : variant === "popular" ? (
+          <>
+            <span className="w-full truncate px-1 text-center">{peerName ?? "1 joined"}</span>
+            <span className="text-[9px] font-normal opacity-70">1 open</span>
+          </>
+        ) : variant === "open" ? (
+          <span>Open</span>
+        ) : null}
+      </button>
+    );
+  }
+
   return (
     <section className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
-      <div className="grid grid-cols-[1fr_repeat(3,_108px)] gap-x-2 border-b border-slate-100 bg-panelStrong px-5 py-3">
+      {/* ── Desktop column header (hidden on mobile) ── */}
+      <div className="hidden sm:grid sm:grid-cols-[1fr_repeat(3,_108px)] gap-x-2 border-b border-slate-100 bg-panelStrong px-5 py-3">
         <span className="text-[10px] font-bold uppercase tracking-widest text-muted">Day</span>
-        {(["9AM", "11AM", "1PM"] as const).map((t) => (
+        {SLOT_TIME_LABELS.map((t) => (
           <span key={t} className="text-center text-[10px] font-bold uppercase tracking-widest text-muted">{t} EDT</span>
         ))}
       </div>
+
       <div className="divide-y divide-slate-100">
         {days.map(({ date, dayLabel, slots }) => (
-          <div key={date} className="grid grid-cols-[1fr_repeat(3,_108px)] items-center gap-x-2 px-5 py-2.5">
-            <span className="text-sm font-medium text-ink">{dayLabel}</span>
-            {slots.map((slot) => {
-              const demand = slotDemand[slot.id] ?? 0;
-              const isStep1 = slot.id === slot1;
-              const isStep2 = slot.id === slot2;
-              const isSelectedByMe = isStep1 || isStep2;
-              const isFull = demand >= 2 && !isSelectedByMe;
-              const isConflicted = step === 2 && !isSelectedByMe && conflictedSlots.has(slot.id);
-              const isLimitReached = slot1 !== null && slot2 !== null && !isSelectedByMe;
-              const isSameAsStep1 = step === 2 && slot.id === slot1;
+          <div key={date}>
+            {/* ── Desktop row ── */}
+            <div className="hidden sm:grid sm:grid-cols-[1fr_repeat(3,_108px)] items-center gap-x-2 px-5 py-2.5">
+              <span className="text-sm font-medium text-ink">{dayLabel}</span>
+              {slots.map((slot) => renderSlotBtn(slot))}
+            </div>
 
-              type Variant = "selected" | "full" | "notAllowed" | "popular" | "open" | "disabled";
-              let variant: Variant;
-              if (isStep1 || isStep2) variant = "selected";
-              else if (isFull) variant = "full";
-              else if (isConflicted) variant = "notAllowed";
-              else if (isLimitReached || isSameAsStep1) variant = "disabled";
-              else if (demand === 1) variant = "popular";
-              else variant = "open";
-
-              const isClickable = variant !== "full" && variant !== "disabled" && variant !== "notAllowed";
-
-              const btnClass: Record<Variant, string> = {
-                selected: "border-primary bg-primary text-white shadow-sm",
-                full: "cursor-not-allowed border-rose-200 bg-rose-50 text-rose-500",
-                notAllowed: "cursor-not-allowed border-rose-200 bg-rose-50 text-rose-400",
-                popular: "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100",
-                open: "border-slate-200 bg-white text-slate-500 hover:border-primary/50 hover:text-primary",
-                disabled: "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300",
-              };
-
-              const label = isStep1 ? "Session 1" : isStep2 ? "Session 2" : null;
-
-              return (
-                <button
-                  key={slot.id}
-                  type="button"
-                  disabled={!isClickable}
-                  onClick={() => onSlotClick(slot.id)}
-                  className={`inline-flex w-full flex-col items-center justify-center gap-0.5 rounded-xl border py-2.5 text-[11px] font-semibold transition ${btnClass[variant]}`}
-                >
-                  {variant === "selected" ? (
-                    <>
-                      <svg className="h-3 w-3" fill="none" viewBox="0 0 12 12">
-                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                      <span>{label}</span>
-                    </>
-                  ) : variant === "full" ? (
-                    <span>Full</span>
-                  ) : variant === "notAllowed" ? (
-                    <>
-                      <span>Not</span>
-                      <span>Allowed</span>
-                    </>
-                  ) : variant === "popular" ? (
-                    <>
-                      <span>1 joined</span>
-                      <span className="text-[9px] font-normal opacity-70">1 open</span>
-                    </>
-                  ) : variant === "open" ? (
-                    <span>Open</span>
-                  ) : null}
-                </button>
-              );
-            })}
+            {/* ── Mobile row: day label + 3 equal-width buttons ── */}
+            <div className="sm:hidden px-3 py-3">
+              <p className="mb-2 text-xs font-semibold text-muted">{dayLabel}</p>
+              <div className="grid grid-cols-3 gap-2">
+                {slots.map((slot, i) => renderSlotBtn(slot, SLOT_TIME_LABELS[i]))}
+              </div>
+            </div>
           </div>
         ))}
       </div>
     </section>
   );
 }
+
+// ─── Schedule workspace ───────────────────────────────────────────────────────
 
 function ParticipantScheduleWorkspace({
   user,
@@ -400,7 +486,7 @@ function ParticipantScheduleWorkspace({
 }: {
   user: User;
   profile: PortalProfile;
-  assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }>;
+  assignments: Assignment[];
   onDone?: (slot1: string, slot2: string) => void;
 }) {
   const assignment = assignments[0] ?? null;
@@ -408,6 +494,7 @@ function ParticipantScheduleWorkspace({
   const [slot1, setSlot1] = useState<string | null>(null);
   const [slot2, setSlot2] = useState<string | null>(null);
   const [slotDemand, setSlotDemand] = useState<Record<string, number>>({});
+  const [slotNames, setSlotNames] = useState<Record<string, string>>({});
   const [pairings, setPairings] = useState<[string, string][]>([]);
   const [isLoadingDemand, setIsLoadingDemand] = useState(true);
   const [notes, setNotes] = useState("");
@@ -437,9 +524,10 @@ function ParticipantScheduleWorkspace({
         );
         if (cancelled) return;
         if (res.ok) {
-          const data = await res.json() as { demand: Record<string, number>; pairings: [string, string][] };
+          const data = await res.json() as { demand: Record<string, number>; pairings: [string, string][]; slotNames: Record<string, string> };
           setSlotDemand(data.demand ?? {});
           setPairings(data.pairings ?? []);
+          setSlotNames(data.slotNames ?? {});
         }
       } catch {
         // non-fatal
@@ -450,7 +538,6 @@ function ParticipantScheduleWorkspace({
     return () => { cancelled = true; };
   }, [assignment?.project.id, user.uid]);
 
-  // 8 weekdays (Mon–Fri) from tomorrow
   const allDays = useMemo(() => {
     const result: Array<{ date: string; dayLabel: string; slots: typeof VIDEO_SCHEDULE_SLOTS }> = [];
     const today = new Date();
@@ -473,7 +560,6 @@ function ParticipantScheduleWorkspace({
     return result;
   }, []);
 
-  // Slots that would create a double-pairing with the same person (blocked in step 2)
   const conflictedSlots = useMemo(() => {
     if (!slot1) return new Set<string>();
     const conflicts = new Set<string>();
@@ -483,8 +569,6 @@ function ParticipantScheduleWorkspace({
     }
     return conflicts;
   }, [slot1, pairings]);
-
-  const displayDays = allDays;
 
   function handleSlotClick(slotId: string) {
     const demand = slotDemand[slotId] ?? 0;
@@ -498,8 +582,7 @@ function ParticipantScheduleWorkspace({
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleSubmit() {
     if (!assignment || !slot1 || !slot2) return;
     setIsSaving(true);
     setError(null);
@@ -565,7 +648,6 @@ function ParticipantScheduleWorkspace({
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -573,7 +655,6 @@ function ParticipantScheduleWorkspace({
             <h1 className="mt-1.5 text-2xl font-semibold text-ink">{assignment.project.title}</h1>
             {description ? <p className="mt-2 max-w-2xl text-sm leading-7 text-muted">{description}</p> : null}
           </div>
-          {/* Step indicator */}
           <div className="flex shrink-0 items-center gap-2">
             <div className="flex items-center gap-1.5">
               <div className={`h-2 w-2 rounded-full ${step >= 1 ? "bg-primary" : "bg-slate-200"}`} />
@@ -595,19 +676,19 @@ function ParticipantScheduleWorkspace({
       ) : null}
 
       <SlotGrid
-        days={displayDays}
+        days={allDays}
         slot1={slot1}
         slot2={slot2}
         step={step}
         slotDemand={slotDemand}
+        slotNames={slotNames}
         conflictedSlots={conflictedSlots}
         onSlotClick={handleSlotClick}
         isLoading={isLoadingDemand}
       />
 
-      {/* Sticky bottom bar — step 1 */}
       {step === 1 && slot1 ? (
-        <div className="sticky bottom-4 z-10 flex items-center justify-between gap-4 rounded-[1.5rem] border border-primary/20 bg-white/95 px-6 py-4 shadow-lg backdrop-blur-sm">
+        <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-[1.5rem] border border-primary/20 bg-white/95 px-4 py-4 shadow-lg backdrop-blur-sm sm:px-6">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1 locked in</p>
             <p className="mt-0.5 truncate text-sm font-semibold text-ink">{getVideoSlot(slot1)?.label ?? slot1}</p>
@@ -615,16 +696,15 @@ function ParticipantScheduleWorkspace({
           <button
             type="button"
             onClick={() => setStep(2)}
-            className="shrink-0 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+            className="shrink-0 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primaryStrong sm:px-5"
           >
-            Choose session 2 →
+            Next →
           </button>
         </div>
       ) : null}
 
-      {/* Notes — visible on step 2 */}
       {step === 2 ? (
-        <section className="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+        <section className="rounded-[1.5rem] border border-slate-200 bg-white p-4 sm:p-5">
           <label className="block">
             <span className="text-sm font-medium text-ink">Notes for the scheduler <span className="font-normal text-muted">(optional)</span></span>
             <textarea
@@ -638,43 +718,59 @@ function ParticipantScheduleWorkspace({
         </section>
       ) : null}
 
-      {/* Step 2 confirm bar */}
       {step === 2 ? (
-        <form onSubmit={handleSubmit}>
-          <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-4 rounded-[1.5rem] border border-slate-200 bg-white/95 px-6 py-4 shadow-lg backdrop-blur-sm">
-            <div className="flex flex-1 flex-wrap items-center gap-4 min-w-0">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1</p>
-                <p className="mt-0.5 truncate text-sm font-semibold text-ink">{getVideoSlot(slot1 ?? "")?.label ?? slot1 ?? "—"}</p>
-              </div>
-              <div className="h-8 w-px bg-slate-200" />
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 2</p>
-                <p className="mt-0.5 truncate text-sm font-semibold text-ink">
-                  {slot2 ? (getVideoSlot(slot2)?.label ?? slot2) : <span className="font-normal text-muted">Pick a session above</span>}
-                </p>
-              </div>
+        <div className="sticky bottom-4 z-10 rounded-[1.5rem] border border-slate-200 bg-white/95 px-4 py-4 shadow-lg backdrop-blur-sm sm:px-6">
+          {/* Sessions summary */}
+          <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1</p>
+              <p className="mt-0.5 truncate text-xs font-semibold text-ink sm:text-sm">{getVideoSlot(slot1 ?? "")?.label ?? slot1 ?? "—"}</p>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-muted transition hover:border-slate-300"
-              >
-                ← Back
-              </button>
-              <button
-                disabled={isSaving || !slot1 || !slot2}
-                className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                {isSaving ? "Saving..." : "Confirm →"}
-              </button>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 2</p>
+              <p className="mt-0.5 truncate text-xs font-semibold text-ink sm:text-sm">
+                {slot2 ? (getVideoSlot(slot2)?.label ?? slot2) : <span className="font-normal text-muted">Pick above</span>}
+              </p>
             </div>
           </div>
-        </form>
+          {/* Buttons */}
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-muted transition hover:border-slate-300"
+            >
+              ← Back
+            </button>
+            <button
+              type="button"
+              disabled={isSaving || !slot1 || !slot2}
+              onClick={() => void handleSubmit()}
+              className="flex-1 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {isSaving ? "Saving..." : "Confirm →"}
+            </button>
+          </div>
+        </div>
       ) : null}
     </div>
   );
+}
+
+// ─── Project detail / list view ───────────────────────────────────────────────
+
+function sessionSlotLabel(slotId: string): string {
+  const slot = getVideoSlot(slotId);
+  if (slot) return slot.label;
+  const m = /^(\d{4}-\d{2}-\d{2})-(.+)$/.exec(slotId);
+  if (m) {
+    const [, date, time] = m;
+    const [y, mo, d] = date.split("-").map(Number);
+    const day = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" })
+      .format(new Date(y, mo - 1, d));
+    return `${day} · ${time} EDT`;
+  }
+  return slotId;
 }
 
 function ParticipantProjectsView({
@@ -685,7 +781,7 @@ function ParticipantProjectsView({
 }: {
   user: User;
   profile: PortalProfile;
-  assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }>;
+  assignments: Assignment[];
   isLoading: boolean;
 }) {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -702,13 +798,14 @@ function ParticipantProjectsView({
   // Schedule workspace view
   if (selectedAssignment && scheduleOpen) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 pt-4">
         <button
           type="button"
           onClick={() => setScheduleOpen(false)}
-          className="text-sm font-semibold text-primary hover:underline"
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-muted hover:bg-panelStrong hover:text-ink"
         >
-          ← Back to project
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to project
         </button>
         <ParticipantScheduleWorkspace
           user={user}
@@ -725,22 +822,24 @@ function ParticipantProjectsView({
 
   // Project detail view
   if (selectedAssignment) {
-    const { project, participant } = selectedAssignment;
+    const { project, participant, meetings } = selectedAssignment;
     const localConfirmed = confirmedMap[project.id] ?? null;
     const savedSlots = participant.selectedSlotIds;
     const isConfirmed = !!(localConfirmed ?? (savedSlots.length >= 2 ? savedSlots : null));
     const s1 = localConfirmed?.[0] ?? savedSlots[0] ?? null;
     const s2 = localConfirmed?.[1] ?? savedSlots[1] ?? null;
     const description = project.jobDescription.replace(/<[^>]*>/g, "").trim();
+    const hasMeetings = meetings.length > 0;
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 pt-4">
         <button
           type="button"
           onClick={() => setSelectedProjectId(null)}
-          className="text-sm font-semibold text-primary hover:underline"
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-muted hover:bg-panelStrong hover:text-ink"
         >
-          ← Back to projects
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to projects
         </button>
 
         <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
@@ -749,35 +848,76 @@ function ParticipantProjectsView({
         </section>
 
         {isConfirmed ? (
-          <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8">
-            <div className="flex flex-col items-center text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
-                <svg className="h-7 w-7 text-emerald-600" fill="none" viewBox="0 0 24 24">
-                  <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <h2 className="mt-4 text-xl font-semibold text-ink">Schedule Confirmed</h2>
-              <p className="mt-1.5 text-sm text-muted">Your sessions have been submitted successfully.</p>
-              {s1 && s2 ? (
-                <div className="mt-6 grid w-full max-w-md gap-3 text-left">
-                  <div className="rounded-[1rem] border border-slate-200 bg-panelStrong px-5 py-4">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1</p>
-                    <p className="mt-1 text-sm font-semibold text-ink">{getVideoSlot(s1)?.label ?? s1}</p>
+          <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
+            <div className="flex items-center gap-3 mb-5">
+              {hasMeetings ? (
+                <>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50">
+                    <svg className="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24">
+                      <path d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
                   </div>
-                  <div className="rounded-[1rem] border border-slate-200 bg-panelStrong px-5 py-4">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 2</p>
-                    <p className="mt-1 text-sm font-semibold text-ink">{getVideoSlot(s2)?.label ?? s2}</p>
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">Meeting Booked</h2>
+                    <p className="text-xs text-muted">Your sessions have been confirmed by the client.</p>
                   </div>
-                </div>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setScheduleOpen(true)}
-                className="mt-5 rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-muted transition hover:border-slate-300"
-              >
-                Change sessions
-              </button>
+                </>
+              ) : (
+                <>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50">
+                    <svg className="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                      <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">Schedule Confirmed</h2>
+                    <p className="text-xs text-muted">Your sessions have been submitted successfully.</p>
+                  </div>
+                </>
+              )}
             </div>
+
+            {s1 && s2 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {([{ label: "Session 1", slotId: s1 }, { label: "Session 2", slotId: s2 }] as const).map(({ label, slotId }) => {
+                  const meeting = meetings.find((m) => m.slotId === slotId);
+                  const status: VideoMeetingClientStatus = meeting?.clientStatus ?? "under_review";
+                  const partnerName = meeting ? getPartnerName(meeting, participant.uid || participant.id) : null;
+                  return (
+                    <div key={label} className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-primary">{label}</p>
+                        <StatusBadge status={status} />
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-ink">{sessionSlotLabel(slotId)}</p>
+                      {partnerName ? (
+                        <p className="mt-1 text-xs text-muted">Partner: <span className="font-medium text-ink">{partnerName}</span></p>
+                      ) : null}
+                      {meeting?.meetingUrl ? (
+                        <a
+                          href={meeting.meetingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 block truncate text-xs text-primary underline-offset-2 hover:underline"
+                        >
+                          {meeting.meetingUrl}
+                        </a>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted/70">Meeting link will appear here once added.</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => setScheduleOpen(true)}
+              className="mt-4 rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-muted transition hover:border-slate-300"
+            >
+              Change sessions
+            </button>
           </section>
         ) : (
           <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8">
@@ -833,9 +973,10 @@ function ParticipantProjectsView({
         </section>
       ) : (
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {assignments.map(({ project, participant }) => {
+          {assignments.map(({ project, participant, meetings }) => {
             const localConfirmed = confirmedMap[project.id];
             const isConfirmed = !!(localConfirmed ?? (participant.selectedSlotIds.length >= 2 ? true : false));
+            const hasMeetings = meetings.length > 0;
             return (
               <button
                 key={project.id}
@@ -845,13 +986,17 @@ function ParticipantProjectsView({
               >
                 <p className="font-semibold text-ink">{project.title}</p>
                 <p className="mt-2 text-xs text-muted">
-                  {isConfirmed ? "2 sessions selected" : "Availability not submitted yet"}
+                  {isConfirmed ? (hasMeetings ? "Meeting scheduled" : "2 sessions selected") : "Availability not submitted yet"}
                 </p>
                 <span className={[
                   "mt-3 inline-block rounded-full px-3 py-1 text-xs font-semibold",
-                  isConfirmed ? "bg-emerald-50 text-emerald-700" : "bg-primary/10 text-primary",
+                  !isConfirmed
+                    ? "bg-primary/10 text-primary"
+                    : hasMeetings
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-emerald-50 text-emerald-700",
                 ].join(" ")}>
-                  {isConfirmed ? "Schedule confirmed ✓" : "Open →"}
+                  {!isConfirmed ? "Open →" : hasMeetings ? "Meeting Booked" : "Schedule confirmed ✓"}
                 </span>
               </button>
             );
@@ -861,6 +1006,8 @@ function ParticipantProjectsView({
     </div>
   );
 }
+
+// ─── Profile completion gate ──────────────────────────────────────────────────
 
 function isProfileComplete(p: PortalProfile) {
   const [country = "", city = ""] = p.location.split(" | ");
@@ -900,10 +1047,16 @@ function ProfileCompletionGate({
           ) : null}
 
           <form onSubmit={onSubmit} className="mt-6 space-y-4">
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-ink">Full name</span>
-              <input name="fullName" value={draft.fullName} onChange={onChange} required placeholder="Your full name" className={fieldClass} />
-            </label>
+            <div className="grid grid-cols-2 gap-4">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-ink">First name</span>
+                <input name="firstName" value={draft.firstName} onChange={onChange} required placeholder="First name" className={fieldClass} />
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-ink">Last name</span>
+                <input name="lastName" value={draft.lastName} onChange={onChange} required placeholder="Last name" className={fieldClass} />
+              </label>
+            </div>
             <label className="block">
               <span className="mb-2 block text-sm font-medium text-ink">Email</span>
               <input type="email" value={activeUser.email ?? ""} disabled className={fieldClass} />
@@ -982,6 +1135,8 @@ function ProfileCompletionGate({
   );
 }
 
+// ─── Main portal ──────────────────────────────────────────────────────────────
+
 export function ParticipantsPortal() {
   const searchParams = useSearchParams();
   const firebaseReady = isFirebaseConfigured();
@@ -995,7 +1150,7 @@ export function ParticipantsPortal() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [emailMode, setEmailMode] = useState<EmailMode>("signin");
   const [emailForm, setEmailForm] = useState(emptyEmailForm);
-  const [assignments, setAssignments] = useState<Array<{ project: VideoProject; participant: VideoProjectParticipant }>>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(true);
   const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1011,33 +1166,16 @@ export function ParticipantsPortal() {
   }, []);
 
   useEffect(() => {
-    if (searchParams.get("projects") === "1") {
-      setActiveView("projects");
-      return;
-    }
-
-    if (searchParams.get("profile") === "1") {
-      setActiveView("profile");
-      return;
-    }
-
-    if (searchParams.get("settings") === "1") {
-      setActiveView("settings");
-      return;
-    }
-
+    if (searchParams.get("projects") === "1") { setActiveView("projects"); return; }
+    if (searchParams.get("profile") === "1") { setActiveView("profile"); return; }
+    if (searchParams.get("settings") === "1") { setActiveView("settings"); return; }
     setActiveView("home");
   }, [searchParams]);
 
   useEffect(() => {
-    if (!hasMounted || !firebaseReady) {
-      setAuthReady(true);
-      return;
-    }
-
+    if (!hasMounted || !firebaseReady) { setAuthReady(true); return; }
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-
     async function init() {
       await ensureFirebaseAuthPersistence();
       await resolveFirebaseRedirectSignIn();
@@ -1048,24 +1186,15 @@ export function ParticipantsPortal() {
         setAuthReady(true);
       });
     }
-
     void init().catch((nextError) => {
       setError(nextError instanceof Error ? nextError.message : "Could not initialize sign in.");
       setAuthReady(true);
     });
-
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-    };
+    return () => { cancelled = true; unsubscribe?.(); };
   }, [firebaseReady, hasMounted]);
 
   useEffect(() => {
-    if (!activeUser || !firebaseReady) {
-      setProfile(null);
-      return;
-    }
-
+    if (!activeUser || !firebaseReady) { setProfile(null); return; }
     let cancelled = false;
     void getPortalProfile(activeUser.uid, "participants")
       .then((existing) => {
@@ -1075,18 +1204,11 @@ export function ParticipantsPortal() {
         setIsEditingProfile(!existing);
       })
       .catch((nextError) => setError(nextError instanceof Error ? nextError.message : "Could not load profile."));
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [activeUser, firebaseReady]);
 
   const loadAssignments = useCallback(async () => {
-    if (!activeUser || !profile) {
-      setAssignments([]);
-      setIsLoadingAssignments(false);
-      return;
-    }
+    if (!activeUser || !profile) { setAssignments([]); setIsLoadingAssignments(false); return; }
     setIsLoadingAssignments(true);
     try {
       const idToken = await activeUser.getIdToken();
@@ -1096,7 +1218,7 @@ export function ParticipantsPortal() {
         headers: { Authorization: `Bearer ${idToken}` },
       });
       if (!res.ok) throw new Error("Could not load assignments.");
-      const data = await res.json() as { assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }> };
+      const data = await res.json() as { assignments: Assignment[] };
       setAssignments(data.assignments);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load assignments.");
@@ -1105,13 +1227,9 @@ export function ParticipantsPortal() {
     }
   }, [activeUser, profile]);
 
-  useEffect(() => {
-    void loadAssignments();
-  }, [loadAssignments]);
-
+  useEffect(() => { void loadAssignments(); }, [loadAssignments]);
   useEffect(() => {
     if (activeView === "projects") void loadAssignments();
-    // Only re-fetch when the tab becomes active, not on every loadAssignments reference change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView]);
 
@@ -1130,7 +1248,12 @@ export function ParticipantsPortal() {
 
   function onDraftChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
     const { name, value } = event.target;
-    setDraft((current) => ({ ...current, [name]: value }));
+    setDraft((current) => {
+      const next = { ...current, [name]: value };
+      if (name === "firstName") next.fullName = `${value} ${current.lastName}`.trim();
+      if (name === "lastName") next.fullName = `${current.firstName} ${value}`.trim();
+      return next;
+    });
   }
 
   async function onEmailAuth(event: FormEvent<HTMLFormElement>) {
@@ -1138,7 +1261,6 @@ export function ParticipantsPortal() {
     if (!firebaseReady) return;
     setIsAuthBusy(true);
     setError(null);
-
     try {
       const { auth } = getFirebaseClientServices();
       const email = emailForm.email.trim().toLowerCase();
@@ -1181,7 +1303,6 @@ export function ParticipantsPortal() {
   async function onProfileSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeUser) return;
-
     setIsSaving(true);
     setError(null);
     setMessage(null);
@@ -1209,22 +1330,14 @@ export function ParticipantsPortal() {
   }
 
   async function onDeleteProfile() {
-    if (!activeUser || !profile) {
-      return;
-    }
-
+    if (!activeUser || !profile) return;
     const confirmed = window.confirm(
       "Delete your participant profile and scheduling account data? This cannot be undone.",
     );
-
-    if (!confirmed) {
-      return;
-    }
-
+    if (!confirmed) return;
     setIsDeletingProfile(true);
     setError(null);
     setMessage(null);
-
     try {
       await deletePortalProfile(activeUser.uid, "participants");
       const { auth } = getFirebaseClientServices();
@@ -1281,10 +1394,7 @@ export function ParticipantsPortal() {
 
   const content = (
     <DeaimerSiteShell
-      platformSideMenuItems={menuItems.map((item) => ({
-        ...item,
-        active: item.active,
-      }))}
+      platformSideMenuItems={menuItems.map((item) => ({ ...item, active: item.active }))}
       userProfile={{ name: profile.fullName || activeUser.email || "Participant", href: "/participants", imageUrl: profile.photoUrl || activeUser.photoURL }}
       onSignOut={() => void onSignOut()}
       themeToggle={{ theme, onToggle: () => changeTheme(theme === "dark" ? "light" : "dark") }}
@@ -1297,7 +1407,7 @@ export function ParticipantsPortal() {
           <div className="space-y-6">
             <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
               <p className="text-xs uppercase tracking-[0.2em] text-muted">Participant home</p>
-              <h1 className="mt-2 text-3xl font-semibold text-ink">Welcome, {profile.fullName}</h1>
+              <h1 className="mt-2 text-3xl font-semibold text-ink">Welcome, {profile.firstName || profile.fullName}</h1>
               <p className="mt-4 text-sm leading-7 text-muted">
                 Your assigned video collection projects and scheduling tasks will appear here.
               </p>

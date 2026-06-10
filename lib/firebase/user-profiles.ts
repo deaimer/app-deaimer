@@ -5,6 +5,8 @@ import type { PortalRole } from "@/lib/auth/portal-config";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
 
 export interface PortalProfileDraft {
+  firstName: string;
+  lastName: string;
   fullName: string;
   email: string;
   phone: string;
@@ -34,10 +36,15 @@ function buildProfileRef(uid: string, role: PortalRole) {
 }
 
 function mapProfileDocument(role: PortalRole, uid: string, data: DocumentData): PortalProfile {
+  const fullName = String(data.fullName ?? "");
+  const [parsedFirst = "", ...rest] = fullName.trim().split(/\s+/);
+  const parsedLast = rest.join(" ");
   return {
     role,
     uid,
-    fullName: String(data.fullName ?? ""),
+    firstName: String(data.firstName ?? "") || parsedFirst,
+    lastName: String(data.lastName ?? "") || parsedLast,
+    fullName,
     email: String(data.email ?? ""),
     phone: String(data.phone ?? ""),
     organization: String(data.organization ?? ""),
@@ -57,8 +64,12 @@ function mapProfileDocument(role: PortalRole, uid: string, data: DocumentData): 
 }
 
 export function createProfileDraft(user: User, role?: PortalRole): PortalProfileDraft {
+  const displayName = user.displayName ?? "";
+  const [first = "", ...rest] = displayName.trim().split(/\s+/);
   return {
-    fullName: user.displayName ?? "",
+    firstName: first,
+    lastName: rest.join(" "),
+    fullName: displayName,
     email: role ? getLockedProfileEmail(role, user.email) : user.email ?? "",
     phone: user.phoneNumber ?? "",
     organization: "",
@@ -93,6 +104,8 @@ export async function savePortalProfile(user: User, role: PortalRole, draft: Por
     {
       role,
       uid: user.uid,
+      firstName: draft.firstName.trim(),
+      lastName: draft.lastName.trim(),
       fullName: draft.fullName.trim(),
       email: resolvedEmail,
       phone: draft.phone.trim(),

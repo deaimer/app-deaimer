@@ -253,7 +253,7 @@ function MeetingDetailView({
           onClose={() => setLinkOpen(false)}
         />
       )}
-      <div className="space-y-4">
+      <div className="space-y-4 pt-4">
         <div className="flex flex-wrap items-center gap-3">
           <BackBtn label="Scheduling" onClick={onBack} />
           <div className="min-w-0 flex-1">
@@ -360,7 +360,7 @@ function SchedulingListView({
   const filledSlots = computeFilledSlots(participants, meetings);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pt-4">
       <div className="flex items-center gap-3">
         <BackBtn label={project.title} onClick={onBack} />
         <h2 className="text-base font-semibold text-ink">Scheduling</h2>
@@ -417,7 +417,7 @@ function ParticipantsListView({
   onBack: () => void;
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pt-4">
       <div className="flex items-center gap-3">
         <BackBtn label={project.title} onClick={onBack} />
         <h2 className="text-base font-semibold text-ink">
@@ -467,7 +467,7 @@ function VideoProjectDetailView({
   onBack: () => void;
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pt-4">
       <div className="flex flex-wrap items-center gap-3">
         <BackBtn label="Projects" onClick={onBack} />
         <div className="min-w-0 flex-1">

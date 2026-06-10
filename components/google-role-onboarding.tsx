@@ -47,6 +47,8 @@ interface GoogleRoleOnboardingProps {
 type EmailMode = "signup" | "signin";
 
 const emptyDraft: PortalProfileDraft = {
+  firstName: "",
+  lastName: "",
   fullName: "",
   email: "",
   phone: "",
