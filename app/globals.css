@@ -404,6 +404,20 @@ a {
 .cand-dark .text-rose-400    { color: #f87171; }
 .cand-dark .text-rose-500    { color: #f87171; }
 
+/* Amber — popular slots */
+.cand-dark .bg-amber-50              { background-color: rgba(245,158,11,0.1); }
+.cand-dark .border-amber-300         { border-color: rgba(245,158,11,0.35); }
+.cand-dark .text-amber-800           { color: #fbbf24; }
+.cand-dark .hover\:bg-amber-100:hover { background-color: rgba(245,158,11,0.16); }
+
+/* Emerald — success banners & confirmed states */
+.cand-dark .bg-emerald-50      { background-color: rgba(16,185,129,0.1); }
+.cand-dark .bg-emerald-100     { background-color: rgba(16,185,129,0.14); }
+.cand-dark .border-emerald-200 { border-color: rgba(16,185,129,0.25); }
+.cand-dark .text-emerald-600   { color: #34d399; }
+.cand-dark .text-emerald-700   { color: #34d399; }
+.cand-dark .text-emerald-900   { color: #34d399; }
+
 /* Logo swap */
 .cand-dark .cand-light-logo { display: none; }
 .cand-dark .cand-dark-logo  { display: block; }

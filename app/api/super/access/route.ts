@@ -138,6 +138,19 @@ export async function GET(req: NextRequest) {
       company: String(data.company ?? ""),
       contactName: String(data.contactName ?? ""),
       notes: String(data.notes ?? ""),
+      people: Array.isArray(data.people)
+        ? data.people.map((p: unknown) => {
+            const person = p as Record<string, unknown>;
+            return {
+              name: String(person.name ?? ""),
+              email: String(person.email ?? ""),
+              tempPassword: String(person.tempPassword ?? ""),
+              tempPasswordHash: String(person.tempPasswordHash ?? ""),
+              passwordUpdated: Boolean(person.passwordUpdated),
+              active: Boolean(person.active),
+            };
+          })
+        : [],
       status: "approved" as const,
       invitedByEmail: String(data.invitedByEmail ?? ""),
       invitedByUid: String(data.invitedByUid ?? ""),

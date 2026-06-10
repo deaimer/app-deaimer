@@ -20,17 +20,35 @@ import { normalizeEmail } from "@/lib/auth/access-control";
 import { getFirebaseClientServices } from "@/lib/firebase/client";
 import { saveClientApproval } from "@/lib/firebase/client-access";
 
-export const VIDEO_SCHEDULE_DATES = [
-  "2026-06-09",
-  "2026-06-10",
-  "2026-06-11",
-  "2026-06-12",
-] as const;
+export interface VideoScheduleSlot {
+  id: string;       // "2026-06-09-9AM"
+  date: string;     // "YYYY-MM-DD"
+  time: string;     // "9AM" | "11AM" | "1PM"
+  dayLabel: string; // "Monday, Jun 9"
+  label: string;    // "Monday, Jun 9 · 9AM EDT"
+}
 
-export const VIDEO_SCHEDULE_TIMES = ["9AM", "11AM", "1PM"] as const;
-
-export type VideoScheduleDate = (typeof VIDEO_SCHEDULE_DATES)[number];
-export type VideoScheduleTime = (typeof VIDEO_SCHEDULE_TIMES)[number];
+function buildVideoScheduleSlots(): VideoScheduleSlot[] {
+  const slots: VideoScheduleSlot[] = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = 0; i <= 18; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    const dateStr = [
+      d.getFullYear(),
+      String(d.getMonth() + 1).padStart(2, "0"),
+      String(d.getDate()).padStart(2, "0"),
+    ].join("-");
+    const dayLabel = new Intl.DateTimeFormat("en-US", {
+      weekday: "long", month: "short", day: "numeric",
+    }).format(d);
+    for (const time of ["9AM", "11AM", "1PM"] as const) {
+      slots.push({ id: `${dateStr}-${time}`, date: dateStr, time, dayLabel, label: `${dayLabel} · ${time} EDT` });
+    }
+  }
+  return slots;
+}
 
 export interface VideoCompany {
   id: string;
@@ -70,30 +88,31 @@ export interface VideoProjectParticipant {
   updatedAt?: unknown;
 }
 
+export type VideoMeetingClientStatus =
+  | "under_review"
+  | "meeting_booked"
+  | "session_approved"
+  | "session_rejected"
+  | "no_show_up";
+
 export interface VideoMeeting {
   id: string;
   projectId: string;
   slotId: string;
-  date: VideoScheduleDate;
-  time: VideoScheduleTime;
+  date: string;
+  time: string;
   participantAUid: string;
   participantBUid: string;
   participantAName: string;
   participantBName: string;
   meetingUrl: string;
   notes: string;
+  clientStatus: VideoMeetingClientStatus;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
 
-export const VIDEO_SCHEDULE_SLOTS = VIDEO_SCHEDULE_DATES.flatMap((date) =>
-  VIDEO_SCHEDULE_TIMES.map((time) => ({
-    id: `${date}-${time}`,
-    date,
-    time,
-    label: `${formatVideoScheduleDate(date)} at ${time} EDT`,
-  })),
-);
+export const VIDEO_SCHEDULE_SLOTS = buildVideoScheduleSlots();
 
 function db() {
   return getFirebaseClientServices().firestore;
@@ -177,9 +196,7 @@ function mapParticipant(data: DocumentData, id: string): VideoProjectParticipant
     addedByEmail: normalizeEmail(String(data.addedByEmail ?? "")),
     addedByUid: String(data.addedByUid ?? ""),
     selectedSlotIds: Array.isArray(data.selectedSlotIds)
-      ? data.selectedSlotIds.map(String).filter((slotId) =>
-          VIDEO_SCHEDULE_SLOTS.some((slot) => slot.id === slotId),
-        )
+      ? data.selectedSlotIds.map(String).filter(Boolean)
       : [],
     schedulingNotes: String(data.schedulingNotes ?? ""),
     createdAt: data.createdAt,
@@ -187,23 +204,26 @@ function mapParticipant(data: DocumentData, id: string): VideoProjectParticipant
   };
 }
 
-function mapMeeting(data: DocumentData, id: string): VideoMeeting {
-  const fallbackSlot = VIDEO_SCHEDULE_SLOTS[0];
-  const date = VIDEO_SCHEDULE_DATES.includes(data.date) ? data.date : fallbackSlot.date;
-  const time = VIDEO_SCHEDULE_TIMES.includes(data.time) ? data.time : fallbackSlot.time;
+const VALID_CLIENT_STATUSES: VideoMeetingClientStatus[] = [
+  "meeting_booked", "session_approved", "session_rejected", "no_show_up",
+];
 
+function mapMeeting(data: DocumentData, id: string): VideoMeeting {
   return {
     id,
     projectId: String(data.projectId ?? ""),
     slotId: String(data.slotId ?? ""),
-    date,
-    time,
+    date: String(data.date ?? ""),
+    time: String(data.time ?? ""),
     participantAUid: String(data.participantAUid ?? ""),
     participantBUid: String(data.participantBUid ?? ""),
     participantAName: String(data.participantAName ?? ""),
     participantBName: String(data.participantBName ?? ""),
     meetingUrl: String(data.meetingUrl ?? ""),
     notes: String(data.notes ?? ""),
+    clientStatus: VALID_CLIENT_STATUSES.includes(data.clientStatus)
+      ? (data.clientStatus as VideoMeetingClientStatus)
+      : "under_review",
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -229,6 +249,18 @@ export function subscribeToVideoCompanies(
   return onSnapshot(
     query(companiesCollection(), orderBy("name", "asc")),
     (snapshot) => callback(snapshot.docs.map((document) => mapCompany(document.data(), document.id))),
+    onError,
+  );
+}
+
+export function subscribeToVideoProject(
+  projectId: string,
+  callback: (project: VideoProject | null) => void,
+  onError?: (error: Error) => void,
+) {
+  return onSnapshot(
+    doc(db(), "videoProjects", projectId),
+    (snapshot) => callback(snapshot.exists() ? mapProject(snapshot.data(), snapshot.id) : null),
     onError,
   );
 }
@@ -276,30 +308,20 @@ export function subscribeToClientVideoProjects(
   clientEmail: string | null | undefined,
   callback: (projects: VideoProject[]) => void,
   onError?: (error: Error) => void,
+  clientCompanyName?: string | null,
 ) {
-  const email = normalizeEmail(clientEmail);
+  const companyName = (clientCompanyName ?? "").trim();
 
-  if (!email) {
+  if (!companyName) {
     callback([]);
     return () => undefined;
   }
 
+  // Query videoProjects directly by companyName — this is set when the project is
+  // created from the DC form and always matches clientAccess.company
   return onSnapshot(
-    query(companiesCollection(), where("managerEmails", "array-contains", email)),
-    (snapshot) => {
-      const companyIds = snapshot.docs.map((document) => document.id).slice(0, 30);
-
-      if (companyIds.length === 0) {
-        callback([]);
-        return;
-      }
-
-      void getDocs(query(projectsCollection(), where("companyId", "in", companyIds)))
-        .then((projectsSnapshot) =>
-          callback(projectsSnapshot.docs.map((document) => mapProject(document.data(), document.id))),
-        )
-        .catch((error) => onError?.(error));
-    },
+    query(projectsCollection(), where("companyName", "==", companyName)),
+    (snapshot) => callback(snapshot.docs.map((d) => mapProject(d.data(), d.id))),
     onError,
   );
 }
@@ -581,9 +603,7 @@ export async function saveMyVideoAvailability(input: {
   selectedSlotIds: string[];
   schedulingNotes: string;
 }) {
-  const selectedSlotIds = Array.from(new Set(input.selectedSlotIds)).filter((slotId) =>
-    VIDEO_SCHEDULE_SLOTS.some((slot) => slot.id === slotId),
-  );
+  const selectedSlotIds = Array.from(new Set(input.selectedSlotIds)).filter(Boolean);
 
   await updateDoc(participantRef(input.projectId, input.participantId), {
     uid: input.uid,
@@ -624,6 +644,7 @@ export async function saveVideoMeeting(input: {
     participantBName: input.participantB.fullName || input.participantB.email,
     meetingUrl: input.meetingUrl.trim(),
     notes: input.notes.trim(),
+    clientStatus: "under_review",
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -634,8 +655,47 @@ export async function updateVideoMeetingUrl(
   meetingId: string,
   meetingUrl: string,
 ) {
+  const url = meetingUrl.trim();
+  const update: Record<string, unknown> = { meetingUrl: url, updatedAt: serverTimestamp() };
+  if (url) update.clientStatus = "meeting_booked";
+  await updateDoc(meetingRef(projectId, meetingId), update);
+}
+
+export async function updateVideoMeetingClientStatus(
+  projectId: string,
+  meetingId: string,
+  clientStatus: VideoMeetingClientStatus,
+) {
   await updateDoc(meetingRef(projectId, meetingId), {
-    meetingUrl: meetingUrl.trim(),
+    clientStatus,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function createVideoMeetingFromSlot(input: {
+  projectId: string;
+  slotId: string;
+  participantA: VideoProjectParticipant;
+  participantB: VideoProjectParticipant;
+  meetingUrl: string;
+}) {
+  const slot = getVideoSlot(input.slotId);
+  const parts = input.slotId.split("-");
+  const slotDate = parts.slice(0, 3).join("-");
+  const slotTime = parts[3] ?? "";
+  await addDoc(meetingsCollection(input.projectId), {
+    projectId: input.projectId,
+    slotId: input.slotId,
+    date: slot?.date ?? slotDate,
+    time: slot?.time ?? slotTime,
+    participantAUid: input.participantA.uid || input.participantA.id,
+    participantBUid: input.participantB.uid || input.participantB.id,
+    participantAName: input.participantA.fullName || input.participantA.email,
+    participantBName: input.participantB.fullName || input.participantB.email,
+    meetingUrl: input.meetingUrl.trim(),
+    notes: "",
+    clientStatus: input.meetingUrl.trim() ? "meeting_booked" : "under_review",
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 }

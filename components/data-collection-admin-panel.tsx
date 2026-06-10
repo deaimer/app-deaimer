@@ -48,7 +48,7 @@ import {
   generateQAReportCSV,
   generateTranscriptionJSON,
 } from "@/lib/ops-exports";
-import { VideoCollectionAdminPanel } from "@/components/video-collection-admin-panel";
+import { VideoProjectScopedDetails, VideoProjectScopedMeetings } from "@/components/video-collection-admin-panel";
 
 export type DCAdminSection =
   | "projects"
@@ -56,8 +56,7 @@ export type DCAdminSection =
   | "sessions"
   | "transcription"
   | "qa-review"
-  | "delivery"
-  | "video";
+  | "delivery";
 
 interface DataCollectionAdminPanelProps {
   activeUser: User;
@@ -65,7 +64,7 @@ interface DataCollectionAdminPanelProps {
   isSuperAdmin: boolean;
 }
 
-// â”€â”€â”€ Small shared components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Small shared components â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function SectionHeader({
   title,
@@ -205,7 +204,7 @@ function formatDate(val: unknown): string {
   }
 }
 
-// â”€â”€â”€ Projects section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Projects section â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function groupSessionsByProject(sessions: DCSession[]) {
   const groups = new Map<string, DCSession[]>();
@@ -417,7 +416,7 @@ function ProjectsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
   );
 }
 
-// â”€â”€â”€ Project Detail â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Project Detail â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function ProjectDetail({
   project,
@@ -450,6 +449,7 @@ function ProjectDetail({
   const [workerRoles, setWorkerRoles] = useState<OpsRole[]>(["transcription"]);
   const [addingWorker, setAddingWorker] = useState(false);
   const [addWorkerError, setAddWorkerError] = useState("");
+  const [projectTab, setProjectTab] = useState<"details" | "scheduling">("details");
 
   const isUtterance = project.recordingMode === "utterance";
   const totalExpectedPrompts = isUtterance
@@ -472,12 +472,8 @@ function ProjectDetail({
       u4 = subscribeToOpsWorkersByProject(project.id, setWorkers);
     } else {
       void fetchOpsWorkersByProjects([project.id])
-        .then((records) => {
-          if (!cancelled) setWorkers(records);
-        })
-        .catch(() => {
-          if (!cancelled) setWorkers([]);
-        });
+        .then((records) => { if (!cancelled) setWorkers(records); })
+        .catch(() => { if (!cancelled) setWorkers([]); });
     }
     return () => { cancelled = true; u1(); u2(); u4?.(); };
   }, [isSuperAdmin, project.id]);
@@ -487,7 +483,6 @@ function ProjectDetail({
     subscribeToAdminApprovals(setAdminApprovals);
   }, [isSuperAdmin]);
 
-  // Auto-propagate QA/transcriptor assignments to re-submitted sessions that lost them
   useEffect(() => {
     if (sessions.length === 0) return;
     sessions.forEach((s) => {
@@ -545,25 +540,16 @@ function ProjectDetail({
     setAddWorkerError("");
     try {
       await addWorkerToProject(
-        workerEmail.trim(),
-        workerName.trim(),
-        workerRoles,
-        project.id,
-        activeUser.email ?? "",
-        activeUser.uid,
+        workerEmail.trim(), workerName.trim(), workerRoles, project.id,
+        activeUser.email ?? "", activeUser.uid,
         isSuperAdmin ? "super" : "admin",
         isSuperAdmin ? undefined : (activeUser.email ?? undefined),
         activeUser.displayName || activeUser.email || undefined,
       );
-      setShowAddWorker(false);
-      setWorkerEmail("");
-      setWorkerName("");
-      setWorkerRoles(["transcription"]);
+      setShowAddWorker(false); setWorkerEmail(""); setWorkerName(""); setWorkerRoles(["transcription"]);
     } catch (err) {
       setAddWorkerError(err instanceof Error ? err.message : "Could not add worker.");
-    } finally {
-      setAddingWorker(false);
-    }
+    } finally { setAddingWorker(false); }
   }
 
   async function handleRemoveWorker(worker: OpsWorker) {
@@ -574,37 +560,47 @@ function ProjectDetail({
 
   async function handleAssign(e: FormEvent) {
     e.preventDefault();
-    setAssigning(true);
-    setAssignError("");
+    setAssigning(true); setAssignError("");
     try {
-      await inviteAndAssignSpeaker(
-        project,
-        assignEmail,
-        assignName,
-        project.targetHours || 0,
-        activeUser.email ?? "",
-        activeUser.uid,
-      );
-      setShowAssign(false);
-      setAssignEmail("");
-      setAssignName("");
+      await inviteAndAssignSpeaker(project, assignEmail, assignName, project.targetHours || 0, activeUser.email ?? "", activeUser.uid);
+      setShowAssign(false); setAssignEmail(""); setAssignName("");
     } catch (err) {
       setAssignError(err instanceof Error ? err.message : "Could not assign speaker.");
-    } finally {
-      setAssigning(false);
-    }
+    } finally { setAssigning(false); }
   }
 
   return (
     <div className="space-y-6">
-      <button
-        type="button"
-        onClick={onBack}
-        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to projects
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-muted shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-ink active:scale-95"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to projects
+        </button>
+        <div className="flex gap-1 rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setProjectTab("details")}
+            className={["rounded-full px-4 py-1.5 text-sm font-medium transition", projectTab === "details" ? "bg-primary text-white" : "text-muted hover:text-ink"].join(" ")}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setProjectTab("scheduling")}
+            className={["rounded-full px-4 py-1.5 text-sm font-medium transition", projectTab === "scheduling" ? "bg-primary text-white" : "text-muted hover:text-ink"].join(" ")}
+          >
+            Scheduling
+          </button>
+        </div>
+      </div>
+
+      {projectTab === "scheduling" ? (
+        <VideoProjectScopedMeetings projectId={project.id} />
+      ) : (<>
 
       <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -652,6 +648,10 @@ function ProjectDetail({
           ))}
         </div>
       </div>
+
+      {project.recordingMode === "video" ? (
+        <VideoProjectScopedDetails projectId={project.id} activeUser={activeUser} isSuperAdmin={isSuperAdmin} />
+      ) : (<>
 
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-ink">Speakers ({assignments.length})</h3>
@@ -711,7 +711,6 @@ function ProjectDetail({
         </div>
       )}
 
-      {/* Demographic distribution */}
       {assignments.length > 0 && (() => {
         const genderCounts = sessions.reduce<Record<string, number>>((acc, s) => {
           const g = s.gender || "Unknown";
@@ -722,11 +721,11 @@ function ProjectDetail({
           const raw = Number(s.age);
           let group = "Unknown";
           if (!isNaN(raw) && raw > 0) {
-            if (raw < 25) group = "18â€“24";
-            else if (raw < 35) group = "25â€“34";
-            else if (raw < 45) group = "35â€“44";
-            else if (raw < 55) group = "45â€“54";
-            else if (raw < 65) group = "55â€“64";
+            if (raw < 25) group = "18–24";
+            else if (raw < 35) group = "25–34";
+            else if (raw < 45) group = "35–44";
+            else if (raw < 55) group = "45–54";
+            else if (raw < 65) group = "55–64";
             else group = "65+";
           }
           acc[group] = (acc[group] ?? 0) + 1;
@@ -1081,11 +1080,14 @@ function ProjectDetail({
           </button>
         </form>
       </SlidePanel>
+
+      </>)}
+      </>)}
     </div>
   );
 }
 
-// â”€â”€â”€ Speakers section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Speakers section â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [speakers, setSpeakers] = useState<DCSpeaker[]>([]);
@@ -1233,7 +1235,7 @@ function SpeakersSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
   );
 }
 
-// â”€â”€â”€ Sessions section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Sessions section â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [assignments, setAssignments] = useState<DCAssignment[]>([]);
@@ -1544,7 +1546,7 @@ function SessionsSection({ activeUser, isSuperAdmin }: { activeUser: User; isSup
   );
 }
 
-// â”€â”€â”€ Assignment Detail (Sessions) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Assignment Detail (Sessions) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function AssignmentDetail({
   assignment, sessions, project, speaker, onBack,
@@ -1701,7 +1703,7 @@ function AssignmentDetail({
   );
 }
 
-// â”€â”€â”€ Transcription section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Transcription section â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
@@ -2068,7 +2070,7 @@ function TranscriptionSection({ activeUser, isSuperAdmin }: { activeUser: User; 
   );
 }
 
-// â”€â”€â”€ QA Review section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ QA Review section â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function QAReviewSection({ activeUser, isSuperAdmin }: { activeUser: User; isSuperAdmin: boolean }) {
   const [sessions, setSessions] = useState<DCSession[]>([]);
@@ -2639,7 +2641,7 @@ function DeliverySection({ activeUser: _user }: { activeUser: User }) {
 
 }
 
-// â”€â”€â”€ Main export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€â"€ Main export â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 export function DataCollectionAdminPanel({ activeUser, activeSection, isSuperAdmin }: DataCollectionAdminPanelProps) {
   return (
@@ -2652,7 +2654,6 @@ export function DataCollectionAdminPanel({ activeUser, activeSection, isSuperAdm
       {activeSection === "transcription" && <TranscriptionSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "qa-review" && <QAReviewSection activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
       {activeSection === "delivery" && (isSuperAdmin ? <DeliverySection activeUser={activeUser} /> : <EmptyState message="Delivery is only available to super admins." />)}
-      {activeSection === "video" && <VideoCollectionAdminPanel activeUser={activeUser} isSuperAdmin={isSuperAdmin} />}
     </div>
   );
 }

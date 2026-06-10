@@ -1,12 +1,14 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { X } from "lucide-react";
 import type { User } from "firebase/auth";
 import { normalizeEmail } from "@/lib/auth/access-control";
 import {
   VIDEO_SCHEDULE_SLOTS,
   VideoCompany,
   VideoMeeting,
+  VideoMeetingClientStatus,
   VideoProject,
   VideoProjectParticipant,
   addCompanyPeopleToProject,
@@ -17,6 +19,7 @@ import {
   subscribeToAdminVideoProjects,
   subscribeToVideoCompanies,
   subscribeToVideoMeetings,
+  subscribeToVideoProject,
   subscribeToVideoProjectParticipants,
   subscribeToVideoProjects,
   updateVideoMeetingUrl,
@@ -37,6 +40,28 @@ function StatusBanner({ message, error }: { message: string | null; error: strin
 }
 
 const inputCls = "w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary";
+
+function SlidePanel({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: React.ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button type="button" className="absolute inset-0 bg-black/30" onClick={onClose} aria-label="Close" />
+      <aside className="relative flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h3 className="font-semibold text-ink">{title}</h3>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted hover:bg-slate-100 hover:text-ink">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 px-6 py-5">{children}</div>
+      </aside>
+    </div>
+  );
+}
+
+function EmptyRow({ message }: { message: string }) {
+  return <p className="py-6 text-center text-sm text-muted">{message}</p>;
+}
 
 // ─── Participant row ──────────────────────────────────────────────────────────
 
@@ -392,7 +417,7 @@ function SuperVideoPanel({ activeUser }: { activeUser: User }) {
                 <div className="mt-3 space-y-3">
                   {meetings.map((meeting) => (
                     <div key={meeting.id} className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
-                      <p className="text-sm font-semibold text-ink">{getVideoSlot(meeting.slotId)?.label ?? `${meeting.date} ${meeting.time}`}</p>
+                      <p className="text-sm font-semibold text-ink">{getVideoSlot(meeting.slotId)?.label ?? meeting.date}</p>
                       <p className="mt-0.5 text-xs text-muted">{meeting.participantAName} + {meeting.participantBName}</p>
                       <div className="mt-3 flex gap-2">
                         <input value={urlDrafts[meeting.id] ?? ""} onChange={(e) => setUrlDrafts((c) => ({ ...c, [meeting.id]: e.target.value }))} placeholder="Meeting URL" className="min-w-0 flex-1 rounded-[1rem] border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary" />
@@ -534,6 +559,464 @@ function AdminVideoPanel({ activeUser }: { activeUser: User }) {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+// ─── Scoped: company + admins + participants for one project (Details tab) ────
+
+export function VideoProjectScopedDetails({
+  projectId,
+  activeUser,
+  isSuperAdmin,
+}: {
+  projectId: string;
+  activeUser: User;
+  isSuperAdmin: boolean;
+}) {
+  const myEmail = normalizeEmail(activeUser.email);
+  const [project, setProject] = useState<VideoProject | null>(null);
+  const [companies, setCompanies] = useState<VideoCompany[]>([]);
+  const [participants, setParticipants] = useState<VideoProjectParticipant[]>([]);
+  const [showAssignAdmin, setShowAssignAdmin] = useState(false);
+  const [adminEmailInput, setAdminEmailInput] = useState("");
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [participantDraft, setParticipantDraft] = useState({ uid: "", email: "", fullName: "" });
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => subscribeToVideoProject(projectId, setProject, (e) => setError(e.message)), [projectId]);
+  useEffect(() => { if (isSuperAdmin) return subscribeToVideoCompanies(setCompanies, (e) => setError(e.message)); }, [isSuperAdmin]);
+  useEffect(() => subscribeToVideoProjectParticipants(projectId, setParticipants, (e) => setError(e.message)), [projectId]);
+
+  const selectedCompany = companies.find((c) => c.id === project?.companyId) ?? null;
+
+  async function handleAssignCompany(companyId: string) {
+    if (!project) return;
+    const company = companies.find((c) => c.id === companyId);
+    setError(null); setMessage(null);
+    try {
+      await updateVideoProjectCompany({ projectId: project.id, companyId, companyName: company?.name ?? "" });
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not assign company."); }
+  }
+
+  async function handleAddCompanyPeople() {
+    if (!project || !selectedCompany) return;
+    setIsSaving(true); setError(null); setMessage(null);
+    try {
+      await addCompanyPeopleToProject({ project, company: selectedCompany, actor: activeUser });
+      setMessage(`Added ${selectedCompany.managers.length} people from ${selectedCompany.name}.`);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not add company people."); }
+    finally { setIsSaving(false); }
+  }
+
+  async function handleAddAdmin(e: FormEvent) {
+    e.preventDefault();
+    if (!project || !adminEmailInput.trim()) return;
+    const email = normalizeEmail(adminEmailInput);
+    if (!email) return;
+    const current = project.assignedAdminEmails ?? [];
+    if (current.includes(email)) { setError("Admin already assigned."); return; }
+    setIsSaving(true); setError(null); setMessage(null);
+    try {
+      await updateVideoProjectAdmins({ projectId: project.id, adminEmails: [...current, email] });
+      setAdminEmailInput(""); setShowAssignAdmin(false);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not assign admin."); }
+    finally { setIsSaving(false); }
+  }
+
+  async function handleRemoveAdmin(email: string) {
+    if (!project) return;
+    const current = project.assignedAdminEmails ?? [];
+    try { await updateVideoProjectAdmins({ projectId: project.id, adminEmails: current.filter((e) => e !== email) }); }
+    catch (err) { setError(err instanceof Error ? err.message : "Could not remove admin."); }
+  }
+
+  async function handleAddParticipant(e: FormEvent) {
+    e.preventDefault();
+    if (!project) return;
+    setIsSaving(true); setError(null); setMessage(null);
+    try {
+      await addVideoProjectParticipant({ project, uid: participantDraft.uid, email: participantDraft.email, fullName: participantDraft.fullName, actor: activeUser, source: isSuperAdmin ? "super" : "admin" });
+      setParticipantDraft({ uid: "", email: "", fullName: "" });
+      setShowAddParticipant(false);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not add participant."); }
+    finally { setIsSaving(false); }
+  }
+
+  async function handleRemoveParticipant(participantId: string) {
+    setError(null);
+    try {
+      const idToken = await activeUser.getIdToken();
+      const res = await fetch("/api/video/participants", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ projectId, participantId }),
+      });
+      if (!res.ok) {
+        const data = await res.json() as { error?: string };
+        throw new Error(data.error ?? "Could not remove.");
+      }
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not remove."); }
+  }
+
+  const assignedAdmins = project?.assignedAdminEmails ?? [];
+
+  return (
+    <div className="space-y-6">
+      <StatusBanner message={message} error={error} />
+
+      {/* Client Company (super only) */}
+      {isSuperAdmin && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-ink">Client Company</h3>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <select
+                value={project?.companyId ?? ""}
+                onChange={(e) => void handleAssignCompany(e.target.value)}
+                className="rounded-[1rem] border border-slate-200 bg-panelStrong px-3 py-2 text-sm text-ink outline-none focus:border-primary"
+              >
+                <option value="">— Select company —</option>
+                {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {(project?.companyId || project?.companyName) && (
+                <span className="text-sm font-medium text-ink">{selectedCompany?.name ?? project?.companyName}</span>
+              )}
+              {selectedCompany && selectedCompany.managers.length > 0 && (
+                <button type="button" onClick={() => void handleAddCompanyPeople()} disabled={isSaving}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-semibold text-muted hover:bg-panelStrong disabled:opacity-60">
+                  + Add {selectedCompany.managers.length} company contacts
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assigned Admins (super only) */}
+      {isSuperAdmin && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-ink">Assigned Admins ({assignedAdmins.length})</h3>
+            <button
+              type="button"
+              onClick={() => { setShowAssignAdmin(true); setAdminEmailInput(""); setError(null); }}
+              className="rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primaryStrong"
+            >
+              + Assign Admin
+            </button>
+          </div>
+          {assignedAdmins.length === 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-muted">No admins assigned to this project yet.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                    {["Email", ""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {assignedAdmins.map((email) => (
+                    <tr key={email} className="group hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 text-ink">{email}</td>
+                      <td className="px-4 py-3">
+                        <button type="button" onClick={() => void handleRemoveAdmin(email)}
+                          className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-700 opacity-0 group-hover:opacity-100 hover:bg-rose-50">
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <SlidePanel title="Assign Admin to Project" open={showAssignAdmin} onClose={() => setShowAssignAdmin(false)}>
+            <form onSubmit={(e) => void handleAddAdmin(e)} className="space-y-4">
+              <p className="text-sm text-muted">Enter the admin email to assign them to this video project.</p>
+              {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div>}
+              <input type="email" value={adminEmailInput} onChange={(e) => setAdminEmailInput(e.target.value)}
+                placeholder="admin@deaimer.com" required className={inputCls} />
+              <button type="submit" disabled={isSaving || !adminEmailInput.trim()}
+                className="inline-flex w-full items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-50">
+                {isSaving ? "Assigning…" : "Assign Admin"}
+              </button>
+            </form>
+          </SlidePanel>
+        </div>
+      )}
+
+      {/* Participants */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-ink">Participants ({participants.length})</h3>
+          <button
+            type="button"
+            onClick={() => { setShowAddParticipant(true); setParticipantDraft({ uid: "", email: "", fullName: "" }); setError(null); }}
+            className="rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-white hover:bg-primaryStrong"
+          >
+            + Add Participant
+          </button>
+        </div>
+        {participants.length === 0 ? (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-muted">No participants added yet.</div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-panelStrong text-left text-[11px] uppercase tracking-widest text-muted">
+                  {["Participant", "Email", "Availability", ""].map((h) => <th key={h} className="px-4 py-3 font-medium">{h}</th>)}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {participants.map((p) => {
+                  const canRemove = isSuperAdmin || p.addedByEmail === myEmail;
+                  return (
+                    <tr key={p.id} className="group hover:bg-panelStrong/40">
+                      <td className="px-4 py-3 font-medium text-ink">{p.fullName || p.uid || "—"}</td>
+                      <td className="px-4 py-3 text-muted">{p.email || "—"}</td>
+                      <td className="px-4 py-3 text-muted">
+                        {p.selectedSlotIds.length > 0 ? `${p.selectedSlotIds.length} slot${p.selectedSlotIds.length !== 1 ? "s" : ""}` : "No availability yet"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {canRemove && (
+                          <button type="button" onClick={() => void handleRemoveParticipant(p.id)}
+                            className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-700 opacity-0 group-hover:opacity-100 hover:bg-rose-50">
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <SlidePanel title="Add Participant" open={showAddParticipant} onClose={() => setShowAddParticipant(false)}>
+          <form onSubmit={(e) => void handleAddParticipant(e)} className="space-y-4">
+            <p className="text-sm text-muted">Enter the participant&apos;s details from the /participants platform.</p>
+            {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div>}
+            <div className="space-y-3">
+              <input value={participantDraft.fullName} onChange={(e) => setParticipantDraft((c) => ({ ...c, fullName: e.target.value }))}
+                placeholder="Full name" className={inputCls} />
+              <input type="email" value={participantDraft.email} onChange={(e) => setParticipantDraft((c) => ({ ...c, email: e.target.value }))}
+                placeholder="Email" className={inputCls} />
+              <input value={participantDraft.uid} onChange={(e) => setParticipantDraft((c) => ({ ...c, uid: e.target.value }))}
+                placeholder="UID (optional)" className={inputCls} />
+            </div>
+            <button type="submit" disabled={isSaving || (!participantDraft.email && !participantDraft.uid)}
+              className="inline-flex w-full items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primaryStrong disabled:opacity-50">
+              {isSaving ? "Adding…" : "Add Participant"}
+            </button>
+          </form>
+        </SlidePanel>
+      </div>
+    </div>
+  );
+}
+
+// ─── Scoped: meeting scheduler for one project (Scheduling tab) ───────────────
+
+const ADMIN_STATUS_CFG: Record<VideoMeetingClientStatus, { label: string; cls: string }> = {
+  under_review:     { label: "Under Review",     cls: "border-amber-200 bg-amber-50 text-amber-800" },
+  meeting_booked:   { label: "Meeting Booked",   cls: "border-blue-200 bg-blue-50 text-blue-800" },
+  session_approved: { label: "Session Approved", cls: "border-emerald-200 bg-emerald-50 text-emerald-800" },
+  session_rejected: { label: "Session Rejected", cls: "border-rose-200 bg-rose-50 text-rose-800" },
+  no_show_up:       { label: "No Show Up",       cls: "border-slate-200 bg-slate-100 text-slate-600" },
+};
+
+export function VideoProjectScopedMeetings({
+  projectId,
+}: {
+  projectId: string;
+}) {
+  const [participants, setParticipants] = useState<VideoProjectParticipant[]>([]);
+  const [meetings, setMeetings] = useState<VideoMeeting[]>([]);
+  const [meetingDraft, setMeetingDraft] = useState({ slotId: "", participantAId: "", participantBId: "", notes: "" });
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => subscribeToVideoProjectParticipants(projectId, setParticipants, (e) => setError(e.message)), [projectId]);
+  useEffect(() => subscribeToVideoMeetings(projectId, setMeetings, (e) => setError(e.message)), [projectId]);
+
+  const slotParticipants = useMemo(
+    () => participants.filter((p) => meetingDraft.slotId ? p.selectedSlotIds.includes(meetingDraft.slotId) : p.selectedSlotIds.length > 0),
+    [meetingDraft.slotId, participants],
+  );
+
+  // Compute filled slots: slots where 2+ participants submitted availability
+  const filledSlots = useMemo(() => {
+    const map = new Map<string, VideoProjectParticipant[]>();
+    participants.forEach((p) => {
+      p.selectedSlotIds.forEach((sid) => {
+        if (!map.has(sid)) map.set(sid, []);
+        map.get(sid)!.push(p);
+      });
+    });
+    return [...map.entries()]
+      .filter(([, ps]) => ps.length >= 2)
+      .map(([slotId, ps]) => ({
+        slotId,
+        pA: ps[0]!,
+        pB: ps[1]!,
+        meeting: meetings.find((m) => m.slotId === slotId) ?? null,
+      }));
+  }, [participants, meetings]);
+
+  const matchedUids = useMemo(() => {
+    const s = new Set<string>();
+    meetings.forEach((m) => { s.add(m.participantAUid); s.add(m.participantBUid); });
+    return s;
+  }, [meetings]);
+
+  async function handleFillMeeting(e: FormEvent) {
+    e.preventDefault();
+    setIsSaving(true); setError(null); setMessage(null);
+    try {
+      const pA = participants.find((p) => p.id === meetingDraft.participantAId);
+      const pB = participants.find((p) => p.id === meetingDraft.participantBId);
+      if (!pA || !pB) throw new Error("Choose both participants.");
+      await saveVideoMeeting({ projectId, slotId: meetingDraft.slotId, participantA: pA, participantB: pB, meetingUrl: "", notes: meetingDraft.notes });
+      setMeetingDraft({ slotId: "", participantAId: "", participantBId: "", notes: "" });
+      setMessage("Meeting saved.");
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not save meeting."); }
+    finally { setIsSaving(false); }
+  }
+
+  return (
+    <div className="space-y-5">
+      <StatusBanner message={message} error={error} />
+
+      {/* Participant availability */}
+      <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+        <p className="text-sm font-semibold text-ink">
+          Participant availability
+          {participants.length > 0 && (
+            <span className="ml-2 rounded-full bg-panelStrong px-2 py-0.5 text-xs font-normal text-muted">
+              {participants.filter((p) => p.selectedSlotIds.length > 0).length}/{participants.length} submitted
+            </span>
+          )}
+        </p>
+        {participants.length === 0 ? (
+          <p className="mt-3 text-sm text-muted">No participants added yet.</p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {participants.map((p) => {
+              const isMatched = matchedUids.has(p.uid) || matchedUids.has(p.id);
+              return (
+                <div key={p.id} className="rounded-[1rem] border border-slate-200 bg-panelStrong px-4 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-ink">{p.fullName || p.email || p.uid || "Unnamed"}</p>
+                      {p.email ? <p className="text-xs text-muted">{p.email}</p> : null}
+                    </div>
+                    <span className={[
+                      "shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
+                      isMatched
+                        ? "border border-blue-200 bg-blue-50 text-blue-800"
+                        : p.selectedSlotIds.length > 0
+                          ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
+                          : "border border-slate-200 bg-white text-muted",
+                    ].join(" ")}>
+                      {isMatched ? "Matched" : p.selectedSlotIds.length > 0 ? "Availability submitted" : "Awaiting"}
+                    </span>
+                  </div>
+                  {p.selectedSlotIds.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {p.selectedSlotIds.map((sid) => (
+                        <span key={sid} className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[11px] text-muted">
+                          {getVideoSlot(sid)?.label ?? sid}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Filled slots — read-only view for super admin */}
+      <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+        <p className="text-sm font-semibold text-ink">
+          Confirmed sessions
+          {filledSlots.length > 0 && (
+            <span className="ml-2 rounded-full bg-panelStrong px-2 py-0.5 text-xs font-normal text-muted">
+              {filledSlots.length}
+            </span>
+          )}
+        </p>
+        {filledSlots.length === 0 ? (
+          <p className="mt-3 text-sm text-muted">No slots filled yet — sessions appear once two participants book the same slot.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {filledSlots.map(({ slotId, pA, pB, meeting }) => {
+              const slot = getVideoSlot(slotId);
+              const label = slot?.label ?? slotId;
+              const status: VideoMeetingClientStatus = meeting?.clientStatus ?? "under_review";
+              const { label: statusLabel, cls: statusCls } = ADMIN_STATUS_CFG[status];
+              return (
+                <div key={slotId} className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-ink">{label}</p>
+                      <p className="mt-0.5 text-xs text-muted">
+                        {pA.fullName || pA.email} + {pB.fullName || pB.email}
+                      </p>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${statusCls}`}>
+                      {statusLabel}
+                    </span>
+                  </div>
+                  {meeting?.meetingUrl ? (
+                    <a
+                      href={meeting.meetingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 block truncate text-xs text-primary underline-offset-2 hover:underline"
+                    >
+                      {meeting.meetingUrl}
+                    </a>
+                  ) : (
+                    <p className="mt-2 text-xs text-muted">No meeting link added by client yet.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Schedule a meeting (admin pairing) */}
+      <form onSubmit={(e) => void handleFillMeeting(e)} className="rounded-[1.5rem] border border-slate-200 bg-white p-5 space-y-3">
+        <p className="text-sm font-semibold text-ink">Pair participants manually</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <select value={meetingDraft.slotId} onChange={(e) => setMeetingDraft((c) => ({ ...c, slotId: e.target.value, participantAId: "", participantBId: "" }))} className={inputCls}>
+            <option value="">Select slot</option>
+            {VIDEO_SCHEDULE_SLOTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          <select value={meetingDraft.participantAId} onChange={(e) => setMeetingDraft((c) => ({ ...c, participantAId: e.target.value }))} className={inputCls}>
+            <option value="">Participant 1</option>
+            {slotParticipants.map((p) => <option key={p.id} value={p.id}>{p.fullName || p.email}</option>)}
+          </select>
+          <select value={meetingDraft.participantBId} onChange={(e) => setMeetingDraft((c) => ({ ...c, participantBId: e.target.value }))} className={inputCls}>
+            <option value="">Participant 2</option>
+            {slotParticipants.filter((p) => p.id !== meetingDraft.participantAId).map((p) => <option key={p.id} value={p.id}>{p.fullName || p.email}</option>)}
+          </select>
+          <textarea value={meetingDraft.notes} onChange={(e) => setMeetingDraft((c) => ({ ...c, notes: e.target.value }))} rows={2} placeholder="Notes (optional)" className="sm:col-span-2 w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary" />
+        </div>
+        <button type="submit" disabled={isSaving || !meetingDraft.slotId || !meetingDraft.participantAId || !meetingDraft.participantBId} className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
+          {isSaving ? "Saving..." : "Save pairing"}
+        </button>
+      </form>
     </div>
   );
 }

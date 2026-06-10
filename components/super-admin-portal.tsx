@@ -28,9 +28,12 @@ import {
 import {
   ClientApprovalInput,
   ClientApprovalRecord,
+  ClientApprovalPerson,
+  deleteClientApproval,
   saveClientApproval,
   subscribeToClientApprovals,
 } from "@/lib/firebase/client-access";
+import { generateTempPassword } from "@/lib/utils/password";
 import {
   ensureFirebaseAuthPersistence,
   getFirebaseClientServices,
@@ -95,10 +98,9 @@ import {
   type EvalTranscriptionSection,
 } from "@/components/eval-transcription-panel";
 import { CrowdWorkAdminPanel } from "@/components/crowd-work-admin-panel";
-import { ClientCompaniesPanel } from "@/components/client-companies-panel";
 
 type SuperView = "overview" | "access" | "team" | "workforce" | "company" | "careers" | "data-collection" | "evaluation-transcription" | "crowd-work";
-type AccessTarget = "clients" | "admins" | "super";
+type AccessTarget = "company" | "admin" | "super";
 type AccessMode = "list" | "new" | "edit";
 type AdminDefaultsTab = "basics" | "services" | "role" | "pay" | "policies";
 type SuperWorkforceSection = "partners" | Extract<GlobalWorkforceAdminSection, "job-posts" | "crowd-projects" | "crowd" | "candidates" | "signups" | "commissions" | "data">;
@@ -124,12 +126,14 @@ interface ApprovalRecordView {
   company: string;
   contactName: string;
   notes: string;
+  people?: ClientApprovalPerson[];
   status: "approved";
   servicePermissions?: string[];
 }
 
 type ApprovalDraft = ClientApprovalInput & {
   servicePermissions: string[];
+  people: ClientApprovalPerson[];
   profileDefaults: {
     identity: Pick<
       AdminIdentityDraft,
@@ -161,6 +165,7 @@ const emptyApprovalForm: ApprovalDraft = {
   contactName: "",
   notes: "",
   servicePermissions: [],
+  people: [],
   profileDefaults: emptyAdminAccessProfileDefaults(),
 };
 
@@ -226,25 +231,25 @@ const departmentOptions = [
 ];
 
 const accessPanelCopy: Record<AccessTarget, AccessPanelCopy> = {
-  clients: {
-    addLabel: "Add client access",
+  company: {
+    addLabel: "Add company",
     title: "Approve access",
     description:
-      "Approve portal emails, manage saved access records, and keep client and admin entry permissions tidy from one workspace.",
-    emailLabel: "Client email",
-    emailPlaceholder: "client@company.com",
-    listLabel: "Approved clients",
-    listTitle: "Current client allowlist",
-    emptyLabel: "No clients have been approved yet.",
-    buttonLabel: "Approve client",
-    savingLabel: "Saving client approval...",
-    successLabel: "is now approved for the client portal.",
+      "Approve company access to the client portal. Add a company name and the primary admin who will manage it.",
+    emailLabel: "Primary admin email",
+    emailPlaceholder: "admin@clientcompany.com",
+    listLabel: "Approved companies",
+    listTitle: "Current company allowlist",
+    emptyLabel: "No companies have been approved yet.",
+    buttonLabel: "Approve company",
+    savingLabel: "Saving company...",
+    successLabel: "is now approved.",
   },
-  admins: {
+  admin: {
     addLabel: "Add admin access",
     title: "Approve access",
     description:
-      "Approve portal emails, manage saved access records, and keep client and admin entry permissions tidy from one workspace.",
+      "Approve portal emails, manage saved access records, and keep admin entry permissions tidy from one workspace.",
     emailLabel: "Admin email",
     emailPlaceholder: "admin@deaimer.com",
     listLabel: "Approved admins",
@@ -258,7 +263,7 @@ const accessPanelCopy: Record<AccessTarget, AccessPanelCopy> = {
     addLabel: "Add super admin",
     title: "Approve access",
     description:
-      "Approve portal emails, manage saved access records, and keep client, admin, and super admin permissions tidy from one workspace.",
+      "Approve portal emails, manage saved access records, and keep client, company, and super admin permissions tidy from one workspace.",
     emailLabel: "Super admin email",
     emailPlaceholder: "leader@deaimer.com",
     listLabel: "Approved super admins",
@@ -416,14 +421,14 @@ function OverviewPanel({
 
   const overviewCards = [
     {
-      label: "Approved clients",
+      label: "Approved companies",
       value: String(approvedClientCount).padStart(2, "0"),
-      detail: "Emails cleared to create accounts in the client portal.",
+      detail: "Companies approved to access the client portal.",
     },
     {
-      label: "Approved admins",
+      label: "Approved companies",
       value: String(approvedAdminCount).padStart(2, "0"),
-      detail: "Google accounts cleared to sign in to the admin portal.",
+      detail: "Google accounts cleared to sign in to the company portal.",
     },
     {
       label: "Super admins",
@@ -433,7 +438,7 @@ function OverviewPanel({
     {
       label: "Service controls",
       value: String(servicePages.length).padStart(2, "0"),
-      detail: "Deaimer services that can be granted to approved admins.",
+      detail: "Deaimer services that can be granted to approved companies.",
     },
   ];
 
@@ -450,7 +455,7 @@ function OverviewPanel({
               onClick={onOpenAdmins}
               className="inline-flex items-center justify-center rounded-full border border-white/30 bg-white/10 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/20"
             >
-              Manage admins
+              Manage companies
             </button>
             <button
               type="button"
@@ -476,13 +481,13 @@ function OverviewPanel({
 
       <section className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
         <WorkspaceOpenCard
-          label="Clients"
-          body="Approve client emails before they enter the client portal and create workspace accounts."
+          label="Company"
+          body="Approve companies and their primary admin to access the client portal."
           onClick={onOpenClients}
         />
         <WorkspaceOpenCard
-          label="Admins"
-          body="Approve admin access and decide exactly which Deaimer services each admin can work with."
+          label="Company"
+          body="Approve company access and decide exactly which Deaimer services each company can work with."
           onClick={onOpenAdmins}
         />
         <WorkspaceOpenCard
@@ -566,6 +571,7 @@ interface AccessPanelProps {
   removingSuperEmail: string | null;
   editingAdminEmail: string | null;
   deletingAdminEmail: string | null;
+  deletingCompanyEmail: string | null;
   onTargetChange: (target: AccessTarget) => void;
   onAccessModeChange: (mode: AccessMode) => void;
   onAddApproval: () => void;
@@ -579,6 +585,10 @@ interface AccessPanelProps {
   onToggleServicePermission: (slug: string) => void;
   onEditAdmin: (approval: AdminApprovalRecord) => void;
   onDeleteAdmin: (approval: AdminApprovalRecord) => void;
+  onEditCompany: (approval: ApprovalRecordView) => void;
+  onDeleteCompany: (approval: ApprovalRecordView) => void;
+  onPeopleChange: (people: ClientApprovalPerson[]) => void;
+  onAddPerson: (name: string, email: string, tempPassword: string) => Promise<void>;
   onCancelAdminEdit: () => void;
   onAddSuperAdmin: (email: string) => Promise<void>;
   onRemoveSuperAdmin: (email: string) => Promise<void>;
@@ -600,6 +610,7 @@ function AccessPanel({
   removingSuperEmail,
   editingAdminEmail,
   deletingAdminEmail,
+  deletingCompanyEmail,
   onTargetChange,
   onAccessModeChange,
   onAddApproval,
@@ -609,15 +620,23 @@ function AccessPanel({
   onToggleServicePermission,
   onEditAdmin,
   onDeleteAdmin,
+  onEditCompany,
+  onDeleteCompany,
+  onPeopleChange,
+  onAddPerson,
   onCancelAdminEdit,
   onAddSuperAdmin,
   onRemoveSuperAdmin,
 }: AccessPanelProps) {
   const copy = accessPanelCopy[target];
-  const isEditingAdmin = accessMode === "edit" && target === "admins" && Boolean(editingAdminEmail);
+  const isEditingAdmin = accessMode === "edit" && target === "admin" && Boolean(editingAdminEmail);
   const isSuperTarget = target === "super";
   const [newSuperEmail, setNewSuperEmail] = useState("");
   const [superAccessMessage, setSuperAccessMessage] = useState<string | null>(null);
+  const [personDraft, setPersonDraft] = useState({ name: "", email: "" });
+  const [personTempPassword, setPersonTempPassword] = useState<string | null>(null);
+  const [isAddingPerson, setIsAddingPerson] = useState(false);
+  const [personAddError, setPersonAddError] = useState<string | null>(null);
   const selectedDepartment = departmentOptions.find(
     (department) => department.name === draft.profileDefaults.identity.department,
   ) ?? departmentOptions[0];
@@ -626,7 +645,7 @@ function AccessPanel({
     id: AdminDefaultsTab;
     label: string;
     hint: string;
-  }> = (target === "admins" ? [
+  }> = (target === "admin" ? [
     {
       id: "basics",
       label: "Basics",
@@ -664,7 +683,35 @@ function AccessPanel({
     setActiveAdminDefaultsTab("basics");
     setNewSuperEmail("");
     setSuperAccessMessage(null);
+    setPersonDraft({ name: "", email: "" });
+    setPersonTempPassword(null);
+    setPersonAddError(null);
   }, [target, accessMode]);
+
+  async function handleAddPerson() {
+    const email = personDraft.email.trim().toLowerCase();
+    if (!email || !personTempPassword) return;
+    if (draft.people.some((p) => p.email === email)) return;
+    setIsAddingPerson(true);
+    setPersonAddError(null);
+    try {
+      await onAddPerson(personDraft.name.trim(), email, personTempPassword);
+      onPeopleChange([
+        ...draft.people,
+        { name: personDraft.name.trim(), email, tempPassword: personTempPassword, tempPasswordHash: "", passwordUpdated: false, active: false },
+      ]);
+      setPersonDraft({ name: "", email: "" });
+      setPersonTempPassword(null);
+    } catch (err) {
+      setPersonAddError(err instanceof Error ? err.message : "Could not create person account.");
+    } finally {
+      setIsAddingPerson(false);
+    }
+  }
+
+  function handleRemovePerson(email: string) {
+    onPeopleChange(draft.people.filter((p) => p.email !== email));
+  }
 
   async function handleSuperAdminSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -753,14 +800,14 @@ function AccessPanel({
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primarySoft">
-                {isEditingAdmin ? "Edit admin access" : copy.addLabel}
+                {isEditingAdmin ? "Edit admin access" : accessMode === "edit" && target === "company" ? "Edit company" : copy.addLabel}
               </p>
               <h2 className="mt-3 text-2xl font-semibold text-ink">
-                {isEditingAdmin ? "Update approval" : "Create approval"}
+                {isEditingAdmin || (accessMode === "edit" && target === "company") ? "Update approval" : "Create approval"}
               </h2>
               <p className="mt-3 text-sm leading-7 text-muted">
-                {isEditingAdmin
-                  ? "Adjust the approved record and save the latest permission state."
+                {isEditingAdmin || (accessMode === "edit" && target === "company")
+                  ? "Adjust the approved record and save the latest changes."
                   : "Save a new approved portal record with the details below."}
               </p>
             </div>
@@ -814,60 +861,209 @@ function AccessPanel({
             <div className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
               <p className="text-sm font-semibold text-ink">Approval basics</p>
               <p className="mt-2 text-sm leading-7 text-muted">
-                Set the approved portal identity and internal notes for this record.
+                {target === "company"
+                  ? "Enter the company name and the primary admin who will manage access."
+                  : "Set the approved portal identity and internal notes for this record."}
               </p>
               <div className="mt-4 space-y-4">
-            <label className="block">
-              <span className="mb-2 block text-sm text-muted">{copy.emailLabel}</span>
-              <input
-                name="email"
-                type="email"
-                required
-                value={draft.email}
-                onChange={onChange}
-                placeholder={copy.emailPlaceholder}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
-              />
-            </label>
+            {target === "company" ? (
+              <>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Company name</span>
+                  <input
+                    name="company"
+                    required
+                    value={draft.company}
+                    onChange={onChange}
+                    placeholder="e.g. Acme Corp"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Primary admin name</span>
+                  <input
+                    name="contactName"
+                    value={draft.contactName}
+                    onChange={onChange}
+                    placeholder="e.g. Jane Smith"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Primary admin email</span>
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    value={draft.email}
+                    onChange={onChange}
+                    placeholder={copy.emailPlaceholder}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
 
-            <label className="block">
-              <span className="mb-2 block text-sm text-muted">Organization</span>
-              <input
-                name="company"
-                value={draft.company}
-                onChange={onChange}
-                placeholder="Company or team name"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-2 block text-sm text-muted">Contact name</span>
-              <input
-                name="contactName"
-                value={draft.contactName}
-                onChange={onChange}
-                placeholder="Primary contact"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-2 block text-sm text-muted">Notes</span>
-              <textarea
-                name="notes"
-                rows={4}
-                value={draft.notes}
-                onChange={onChange}
-                placeholder="Optional internal notes"
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
-              />
-            </label>
+                <div className="border-t border-slate-200 pt-4">
+                  <p className="text-sm font-semibold text-ink">People</p>
+                  <p className="mt-1 text-xs text-muted">Additional people who can access this company's projects.</p>
+                  <div className="mt-3 space-y-2">
+                    {draft.people.length === 0 ? (
+                      <p className="text-xs text-muted">No people added yet.</p>
+                    ) : (
+                      draft.people.map((person) => (
+                        <div key={person.email} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-ink">{person.name || person.email}</p>
+                              {person.name ? <p className="text-xs text-muted">{person.email}</p> : null}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {person.passwordUpdated ? (
+                                <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePerson(person.email)}
+                                className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                          {!person.passwordUpdated && person.tempPassword ? (
+                            <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5">
+                              <span className="text-xs text-amber-700">Temp password:</span>
+                              <code className="flex-1 font-mono text-xs font-semibold tracking-wide text-ink">{person.tempPassword}</code>
+                              <button
+                                type="button"
+                                onClick={() => void navigator.clipboard.writeText(person.tempPassword!)}
+                                className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
+                              >
+                                Copy
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {personAddError ? (
+                    <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+                      {personAddError}
+                    </div>
+                  ) : null}
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={personDraft.name}
+                      onChange={(e) => setPersonDraft((c) => ({ ...c, name: e.target.value }))}
+                      placeholder="Name"
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-primary"
+                    />
+                    <input
+                      type="email"
+                      value={personDraft.email}
+                      onChange={(e) => {
+                        setPersonDraft((c) => ({ ...c, email: e.target.value }));
+                        if (!e.target.value.trim()) {
+                          setPersonTempPassword(null);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        if (e.target.value.trim() && !personTempPassword) {
+                          setPersonTempPassword(generateTempPassword());
+                        }
+                      }}
+                      placeholder="Email"
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleAddPerson(); } }}
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-primary"
+                    />
+                  </div>
+                  {personTempPassword ? (
+                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                      <p className="text-xs font-semibold text-amber-900">Temporary password — show this to the person once</p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <code className="flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-sm font-semibold tracking-widest text-ink">
+                          {personTempPassword}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => void navigator.clipboard.writeText(personTempPassword)}
+                          className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                        >
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPersonTempPassword(generateTempPassword())}
+                          className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+                        >
+                          New
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs text-amber-700">This password will not be shown again after you click Add.</p>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void handleAddPerson()}
+                    disabled={!personDraft.email.trim() || !personTempPassword || isAddingPerson}
+                    className="mt-2 rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-ink disabled:opacity-50"
+                  >
+                    {isAddingPerson ? "Adding..." : "Add person"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">{copy.emailLabel}</span>
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    value={draft.email}
+                    onChange={onChange}
+                    placeholder={copy.emailPlaceholder}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Organization</span>
+                  <input
+                    name="company"
+                    value={draft.company}
+                    onChange={onChange}
+                    placeholder="Company or team name"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Contact name</span>
+                  <input
+                    name="contactName"
+                    value={draft.contactName}
+                    onChange={onChange}
+                    placeholder="Primary contact"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm text-muted">Notes</span>
+                  <textarea
+                    name="notes"
+                    rows={4}
+                    value={draft.notes}
+                    onChange={onChange}
+                    placeholder="Optional internal notes"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                  />
+                </label>
+              </>
+            )}
               </div>
             </div>
             ) : null}
 
-            {target === "admins" && activeAdminDefaultsTab === "services" ? (
+            {target === "admin" && activeAdminDefaultsTab === "services" ? (
               <>
                 <div className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
                   <p className="text-sm font-semibold text-ink">Service permissions</p>
@@ -906,7 +1102,7 @@ function AccessPanel({
               </>
             ) : null}
 
-            {target === "admins" && ["role", "pay", "policies"].includes(activeAdminDefaultsTab) ? (
+            {target === "admin" && ["role", "pay", "policies"].includes(activeAdminDefaultsTab) ? (
               <div className="rounded-[1rem] border border-slate-200 bg-panelStrong p-4">
                 <p className="text-sm font-semibold text-ink">Admin details set by super</p>
                 <p className="mt-2 text-sm leading-7 text-muted">
@@ -1159,14 +1355,16 @@ function AccessPanel({
                 ? copy.savingLabel
                 : isEditingAdmin
                   ? "Update admin"
-                  : copy.buttonLabel}
+                  : accessMode === "edit" && target === "company"
+                    ? "Update company"
+                    : copy.buttonLabel}
             </button>
           </form>
         </section>
       ) : (
         <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-panel">
           <div className="mb-5 inline-flex rounded-full border border-slate-200 bg-panelStrong p-1">
-            {(["clients", "admins", "super"] as AccessTarget[]).map((item) => {
+            {(["company", "admin", "super"] as AccessTarget[]).map((item) => {
               const isActive = item === target;
 
               return (
@@ -1184,7 +1382,7 @@ function AccessPanel({
                       : "text-muted hover:text-ink",
                   ].join(" ")}
                 >
-                  {item === "admins" ? "Admins" : item === "super" ? "Super admins" : "Clients"}
+                  {item === "company" ? "Company" : item === "admin" ? "Admin" : "Super admins"}
                 </button>
               );
             })}
@@ -1205,7 +1403,7 @@ function AccessPanel({
                 onClick={onAddApproval}
                 className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white transition hover:bg-primaryStrong"
               >
-                {target === "admins" ? "Add admin" : target === "super" ? "Add super admin" : "Add client"}
+                {target === "company" ? "Add company" : target === "admin" ? "Add admin" : "Add super admin"}
               </button>
               <span className="rounded-full border border-slate-300 bg-panelStrong px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-ink">
                 {isSuperTarget ? superAdmins.length : approvals.length} total
@@ -1292,7 +1490,7 @@ function AccessPanel({
           {!isLoading && !isSuperTarget && approvals.length > 0 ? (
             <div className="mt-5 space-y-2">
               {approvals.map((approval) => {
-                const isAdminApproval = target === "admins";
+                const isAdminApproval = target === "admin";
                 const servicePermissions = approval.servicePermissions ?? [];
                 const allowedServices = servicePermissions
                   .map((permission) => {
@@ -1311,30 +1509,42 @@ function AccessPanel({
                     : approval.notes,
                 ].filter(Boolean);
 
+                const isCompanyApproval = target === "company";
+
                 return (
                   <article
                     key={approval.id}
                     className="rounded-xl border border-slate-200 bg-panelStrong px-3 py-2.5"
                   >
                     <div className="flex min-w-0 items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <p className="truncate text-sm font-semibold text-ink">
-                            {approval.email}
-                          </p>
-                          <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-900">
-                            {approval.status}
-                          </span>
-                        </div>
-                        <p className="mt-1 truncate text-xs text-muted">
-                          {secondaryDetails.join(" | ")}
-                        </p>
-                        <p className="hidden">
-                          {approval.company || "Approved access"}{approval.contactName ? ` • ${approval.contactName}` : ""}
-                        </p>
-                        {approval.contactName ? (
-                          null
-                        ) : null}
+                      <div className="min-w-0 flex-1">
+                        {isCompanyApproval ? (
+                          <>
+                            <p className="truncate text-sm font-semibold text-ink">
+                              {approval.company || approval.email}
+                            </p>
+                            <p className="mt-0.5 truncate text-xs text-muted">
+                              {[approval.contactName, approval.email].filter(Boolean).join(" · ")}
+                            </p>
+                            {(approval.people?.length ?? 0) > 0 ? (
+                              <p className="mt-0.5 text-xs text-muted">{approval.people!.length} {approval.people!.length === 1 ? "person" : "people"}</p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <p className="truncate text-sm font-semibold text-ink">
+                                {approval.email}
+                              </p>
+                              <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-900">
+                                {approval.status}
+                              </span>
+                            </div>
+                            <p className="mt-1 truncate text-xs text-muted">
+                              {secondaryDetails.join(" | ")}
+                            </p>
+                          </>
+                        )}
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">
@@ -1353,9 +1563,25 @@ function AccessPanel({
                               disabled={deletingAdminEmail === approval.email}
                               className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-900 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              {deletingAdminEmail === approval.email
-                                ? "Deleting..."
-                                : "Delete"}
+                              {deletingAdminEmail === approval.email ? "Deleting..." : "Delete"}
+                            </button>
+                          </>
+                        ) : isCompanyApproval ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onEditCompany(approval)}
+                              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-ink transition hover:bg-panelStrong"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteCompany(approval)}
+                              disabled={deletingCompanyEmail === approval.email}
+                              className="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-900 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {deletingCompanyEmail === approval.email ? "Deleting..." : "Delete"}
                             </button>
                           </>
                         ) : null}
@@ -2081,7 +2307,7 @@ function CareersPanel({ activeUser }: { activeUser: User }) {
 
 export function SuperAdminPortal({
   initialView = "overview",
-  initialAccessTarget = "clients",
+  initialAccessTarget = "company",
   initialAccessMode = "list",
   initialEditingEmail = null,
   initialWorkforceSection = "partners",
@@ -2133,6 +2359,7 @@ export function SuperAdminPortal({
   const [isLoadingAdminApprovals, setIsLoadingAdminApprovals] = useState(false);
   const [isSavingApproval, setIsSavingApproval] = useState(false);
   const [deletingAdminEmail, setDeletingAdminEmail] = useState<string | null>(null);
+  const [deletingCompanyEmail, setDeletingCompanyEmail] = useState<string | null>(null);
   const [editingAdminEmail, setEditingAdminEmail] = useState<string | null>(null);
   const [approvalDraft, setApprovalDraft] = useState<ApprovalDraft>(emptyApprovalForm);
   const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
@@ -2183,7 +2410,7 @@ export function SuperAdminPortal({
   }, [initialEvalSection]);
 
   useEffect(() => {
-    if (initialAccessMode !== "edit" || initialAccessTarget !== "admins" || !initialEditingEmail) {
+    if (initialAccessMode !== "edit" || initialAccessTarget !== "admin" || !initialEditingEmail) {
       return;
     }
 
@@ -2201,6 +2428,7 @@ export function SuperAdminPortal({
       company: approval.company,
       contactName: approval.contactName,
       notes: approval.notes,
+      people: [],
       servicePermissions: approval.servicePermissions,
       profileDefaults: approval.profileDefaults,
     });
@@ -2362,7 +2590,7 @@ export function SuperAdminPortal({
     }
 
     setApprovalDraft(
-      activeAccessTarget === "admins" && activeAccessMode === "new"
+      activeAccessTarget === "admin" && activeAccessMode === "new"
         ? createApprovalFormWithEmployeeId(existingAdminEmployeeIds)
         : emptyApprovalForm,
     );
@@ -2435,7 +2663,7 @@ export function SuperAdminPortal({
   function handleAddApprovalPage() {
     setEditingAdminEmail(null);
     setApprovalDraft(
-      activeAccessTarget === "admins"
+      activeAccessTarget === "admin"
         ? createApprovalFormWithEmployeeId(existingAdminEmployeeIds)
         : emptyApprovalForm,
     );
@@ -2458,7 +2686,7 @@ export function SuperAdminPortal({
 
   function handleStartEditAdminApproval(approval: AdminApprovalRecord) {
     setActiveView("access");
-    setActiveAccessTarget("admins");
+    setActiveAccessTarget("admin");
     setActiveAccessMode("edit");
     setEditingAdminEmail(approval.email);
     setApprovalMessage(null);
@@ -2468,10 +2696,11 @@ export function SuperAdminPortal({
       company: approval.company,
       contactName: approval.contactName,
       notes: approval.notes,
+      people: [],
       servicePermissions: approval.servicePermissions,
       profileDefaults: approval.profileDefaults,
     });
-    openAccessPage("admins", "edit", approval.email);
+    openAccessPage("admin", "edit", approval.email);
   }
 
   function handleCancelAdminEdit() {
@@ -2480,7 +2709,7 @@ export function SuperAdminPortal({
     setApprovalDraft(emptyApprovalForm);
     setApprovalMessage(null);
     setErrorMessage(null);
-    router.push("/super?view=access&target=admins");
+    router.push("/super?view=access&target=admin");
   }
 
   async function handleDeleteAdminApproval(approval: AdminApprovalRecord) {
@@ -2514,6 +2743,52 @@ export function SuperAdminPortal({
     } finally {
       setDeletingAdminEmail(null);
     }
+  }
+
+  function handleStartEditCompanyApproval(approval: ApprovalRecordView) {
+    setActiveView("access");
+    setActiveAccessTarget("company");
+    setActiveAccessMode("edit");
+    setEditingAdminEmail(approval.email);
+    setApprovalMessage(null);
+    setErrorMessage(null);
+    setApprovalDraft({
+      ...emptyApprovalForm,
+      email: approval.email,
+      company: approval.company,
+      contactName: approval.contactName,
+      notes: approval.notes,
+      people: approval.people ?? [],
+    });
+    openAccessPage("company", "edit", approval.email);
+  }
+
+  async function handleDeleteCompanyApproval(approval: ApprovalRecordView) {
+    if (!window.confirm(`Delete company "${approval.company || approval.email}"? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingCompanyEmail(approval.email);
+    setApprovalMessage(null);
+    setErrorMessage(null);
+
+    try {
+      await deleteClientApproval(approval.email);
+      setClientApprovals((current) =>
+        current.filter((record) => normalizeEmail(record.email) !== normalizeEmail(approval.email)),
+      );
+      setApprovalMessage(`"${approval.company || approval.email}" has been removed.`);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "We could not delete this company right now.",
+      );
+    } finally {
+      setDeletingCompanyEmail(null);
+    }
+  }
+
+  function handlePeopleChange(people: ClientApprovalPerson[]) {
+    setApprovalDraft((current) => ({ ...current, people }));
   }
 
   async function handleGoogleSignIn() {
@@ -2578,6 +2853,21 @@ export function SuperAdminPortal({
     }
   }
 
+  async function handleAddPersonToCompany(name: string, email: string, tempPassword: string) {
+    if (!activeUser) throw new Error("Not signed in as super admin.");
+    const idToken = await activeUser.getIdToken();
+    const companyEmail = normalizeEmail(approvalDraft.email);
+    const res = await fetch("/api/super/create-person-auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ email, tempPassword, name, companyEmail }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as Record<string, unknown>;
+      throw new Error(typeof data.error === "string" ? data.error : "Could not create person account.");
+    }
+  }
+
   async function handleApprovalSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -2595,7 +2885,7 @@ export function SuperAdminPortal({
     setApprovalMessage(null);
 
     try {
-      if (activeAccessTarget === "clients") {
+      if (activeAccessTarget === "company") {
         await saveClientApproval(activeUser, approvalDraft);
         const normalizedApprovalEmail = normalizeEmail(approvalDraft.email);
         setClientApprovals((current) => [
@@ -2608,6 +2898,7 @@ export function SuperAdminPortal({
             company: approvalDraft.company.trim(),
             contactName: approvalDraft.contactName.trim(),
             notes: approvalDraft.notes.trim(),
+            people: approvalDraft.people,
             status: "approved" as const,
             invitedByEmail: normalizeEmail(activeUser.email),
             invitedByUid: activeUser.uid,
@@ -2748,7 +3039,7 @@ export function SuperAdminPortal({
         return [];
       }
 
-      return activeAccessTarget === "clients" ? clientApprovals : adminApprovals;
+      return activeAccessTarget === "company" ? clientApprovals : adminApprovals;
     },
     [activeAccessTarget, adminApprovals, clientApprovals],
   );
@@ -2756,7 +3047,7 @@ export function SuperAdminPortal({
   const activeApprovalsLoading =
     activeAccessTarget === "super"
       ? false
-      : activeAccessTarget === "clients"
+      : activeAccessTarget === "company"
         ? isLoadingClientApprovals
         : isLoadingAdminApprovals;
   if (!hasMounted || !authReady || isAuthResolving || (activeUser && !isSuperAdminLoaded)) {
@@ -2904,11 +3195,11 @@ export function SuperAdminPortal({
                   activeUserEmail={normalizeEmail(activeUser.email)}
                   reviewerName={activeUser.displayName?.split(" ")[0] || "Super admin"}
                   onOpenAdmins={() => {
-                    setActiveAccessTarget("admins");
+                    setActiveAccessTarget("admin");
                     setActiveView("access");
                   }}
                   onOpenClients={() => {
-                    setActiveAccessTarget("clients");
+                    setActiveAccessTarget("company");
                     setActiveView("access");
                   }}
                   onOpenTeam={() => setActiveView("team")}
@@ -2941,6 +3232,7 @@ export function SuperAdminPortal({
                   removingSuperEmail={removingSuperEmail}
                   editingAdminEmail={editingAdminEmail}
                   deletingAdminEmail={deletingAdminEmail}
+                  deletingCompanyEmail={deletingCompanyEmail}
                   onTargetChange={handleAccessTargetChange}
                   onAccessModeChange={handleAccessModeChange}
                   onAddApproval={handleAddApprovalPage}
@@ -2950,13 +3242,14 @@ export function SuperAdminPortal({
                   onToggleServicePermission={handleToggleServicePermission}
                   onEditAdmin={handleStartEditAdminApproval}
                   onDeleteAdmin={handleDeleteAdminApproval}
+                  onEditCompany={handleStartEditCompanyApproval}
+                  onDeleteCompany={handleDeleteCompanyApproval}
+                  onPeopleChange={handlePeopleChange}
+                  onAddPerson={handleAddPersonToCompany}
                   onCancelAdminEdit={handleCancelAdminEdit}
                   onAddSuperAdmin={handleAddSuperAdmin}
                   onRemoveSuperAdmin={handleRemoveSuperAdmin}
                 />
-                {activeAccessTarget === "clients" && activeAccessMode === "list" ? (
-                  <ClientCompaniesPanel activeUser={activeUser} />
-                ) : null}
               </>
             ) : activeView === "workforce" ? (
               activeWorkforceSection === "partners" ? (

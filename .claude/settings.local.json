@@ -23,7 +23,10 @@
       "Bash(grep -E \"\\\\.\\(module\\\\.css|scss|module\\\\.scss\\)$\")",
       "Bash(node -e ' *)",
       "Bash(dir d:\\\\AI\\\\app-deaimer\\\\app\\\\api /b)",
-      "PowerShell(New-Item -ItemType Directory -Path \"d:\\\\AI\\\\app-deaimer\\\\app\\\\api\\\\ops\\\\claim-resubmissions\" -Force)"
+      "PowerShell(New-Item -ItemType Directory -Path \"d:\\\\AI\\\\app-deaimer\\\\app\\\\api\\\\ops\\\\claim-resubmissions\" -Force)",
+      "Bash(xargs grep -l \"client.*approval\\\\|ClientApproval\")",
+      "Bash(xargs grep -l \"/clients\")",
+      "Bash(grep -v \"^\\\\\"$\")"
     ],
     "additionalDirectories": [
       "d:\\AI\\app-deaimer\\app\\super\\data-collection\\edit"

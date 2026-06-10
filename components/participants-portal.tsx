@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import type { User } from "firebase/auth";
@@ -34,7 +34,6 @@ import {
   VideoProjectParticipant,
   getVideoSlot,
   saveMyVideoAvailability,
-  subscribeToMyVideoAssignments,
   type VideoProject,
 } from "@/lib/firebase/video-collection";
 
@@ -147,7 +146,6 @@ function ParticipantProfileForm({
               ["Country", profileCountry || "Not added"],
               ["City", profileCity || "Not added"],
               ["Phone", profile.phone || "Not added"],
-              ["Headline", profile.jobTitle || "Not added"],
             ].map(([label, value]) => (
               <div key={label} className="grid grid-cols-[140px_1fr] gap-4 border-t border-slate-100 py-3 first:border-t-0">
                 <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">{label}</dt>
@@ -237,7 +235,7 @@ function ParticipantProfileForm({
             />
           </label>
           <label>
-            <span className="mb-2 block text-sm font-medium text-ink">WhatsApp code</span>
+            <span className="mb-2 block text-sm font-medium text-ink">Country Code</span>
             <select
               value={phoneCode}
               onChange={(event) =>
@@ -248,12 +246,12 @@ function ParticipantProfileForm({
               className={fieldClass}
             >
               {phoneCountryCodes.map((item) => (
-                <option key={item.code} value={item.code}>{item.label}</option>
+                <option key={item.code} value={item.code}>{item.label} ({item.code})</option>
               ))}
             </select>
           </label>
           <label>
-            <span className="mb-2 block text-sm font-medium text-ink">WhatsApp number</span>
+            <span className="mb-2 block text-sm font-medium text-ink">Phone</span>
             <input
               value={phoneNumber}
               onChange={(event) =>
@@ -265,18 +263,6 @@ function ParticipantProfileForm({
               className={fieldClass}
             />
           </label>
-          <label>
-            <span className="mb-2 block text-sm font-medium text-ink">Headline</span>
-            <input name="jobTitle" value={draft.jobTitle} onChange={onChange} placeholder="Participant / speaker" className={fieldClass} />
-          </label>
-          <label>
-            <span className="mb-2 block text-sm font-medium text-ink">Photo URL</span>
-            <input name="photoUrl" value={draft.photoUrl} onChange={onChange} placeholder="https://..." className={fieldClass} />
-          </label>
-          <label className="md:col-span-2">
-            <span className="mb-2 block text-sm font-medium text-ink">Bio / notes</span>
-            <textarea name="bio" value={draft.bio} onChange={onChange} rows={5} className={fieldClass} />
-          </label>
         </div>
         <button disabled={isSaving} className="mt-5 w-full rounded-full bg-primary px-5 py-3.5 text-sm font-semibold text-white disabled:opacity-60">
           {isSaving ? "Saving profile..." : "Save profile"}
@@ -286,148 +272,408 @@ function ParticipantProfileForm({
   );
 }
 
-function ParticipantScheduleWorkspace({
-  user,
-  profile,
-  assignments,
+
+function SlotGrid({
+  days,
+  slot1,
+  slot2,
+  step,
+  slotDemand,
+  conflictedSlots,
+  onSlotClick,
+  isLoading,
 }: {
-  user: User;
-  profile: PortalProfile;
-  assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }>;
+  days: Array<{ date: string; dayLabel: string; slots: typeof VIDEO_SCHEDULE_SLOTS }>;
+  slot1: string | null;
+  slot2: string | null;
+  step: 1 | 2;
+  slotDemand: Record<string, number>;
+  conflictedSlots: Set<string>;
+  onSlotClick: (slotId: string) => void;
+  isLoading?: boolean;
 }) {
-  const [selectedProjectId, setSelectedProjectId] = useState(assignments[0]?.project.id ?? "");
-  const [selectedSlotIds, setSelectedSlotIds] = useState<string[]>([]);
-  const [notes, setNotes] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const selectedAssignment = assignments.find((item) => item.project.id === selectedProjectId) ?? assignments[0] ?? null;
-
-  useEffect(() => {
-    if (!selectedAssignment) return;
-    setSelectedProjectId(selectedAssignment.project.id);
-    setSelectedSlotIds(selectedAssignment.participant.selectedSlotIds);
-    setNotes(selectedAssignment.participant.schedulingNotes);
-  }, [selectedAssignment?.project.id]);
-
-  function toggleSlot(slotId: string) {
-    setSelectedSlotIds((current) =>
-      current.includes(slotId) ? current.filter((id) => id !== slotId) : [...current, slotId],
+  if (isLoading) {
+    return (
+      <section className="flex min-h-[260px] items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+      </section>
     );
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedAssignment) return;
-
-    setIsSaving(true);
-    setMessage(null);
-    setError(null);
-
-    try {
-      await saveMyVideoAvailability({
-        projectId: selectedAssignment.project.id,
-        participantId: selectedAssignment.participant.id,
-        uid: user.uid,
-        fullName: profile.fullName,
-        email: profile.email || user.email || "",
-        selectedSlotIds,
-        schedulingNotes: notes,
-      });
-      setMessage("Availability saved for this video collection project.");
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Could not save availability.");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  if (!selectedAssignment) {
+  if (days.length === 0) {
     return (
-      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
-        <h1 className="text-3xl font-semibold text-ink">Scheduling</h1>
-        <p className="mt-4 text-sm leading-7 text-muted">
-          No video collection project has been assigned to you yet.
-        </p>
+      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8 text-center text-sm text-muted">
+        The scheduling window has passed. Contact your project manager.
       </section>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
-        <p className="text-xs uppercase tracking-[0.2em] text-muted">Scheduling</p>
-        <h1 className="mt-2 text-3xl font-semibold text-ink">Book your video slot</h1>
-        <p className="mt-4 max-w-3xl text-sm leading-7 text-muted">
-          Select every slot you can attend. Once a partner speaker is assigned,
-          the client/admin will finalize the meeting URL.
-        </p>
-      </section>
+    <section className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white">
+      <div className="grid grid-cols-[1fr_repeat(3,_108px)] gap-x-2 border-b border-slate-100 bg-panelStrong px-5 py-3">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-muted">Day</span>
+        {(["9AM", "11AM", "1PM"] as const).map((t) => (
+          <span key={t} className="text-center text-[10px] font-bold uppercase tracking-widest text-muted">{t} EDT</span>
+        ))}
+      </div>
+      <div className="divide-y divide-slate-100">
+        {days.map(({ date, dayLabel, slots }) => (
+          <div key={date} className="grid grid-cols-[1fr_repeat(3,_108px)] items-center gap-x-2 px-5 py-2.5">
+            <span className="text-sm font-medium text-ink">{dayLabel}</span>
+            {slots.map((slot) => {
+              const demand = slotDemand[slot.id] ?? 0;
+              const isStep1 = slot.id === slot1;
+              const isStep2 = slot.id === slot2;
+              const isSelectedByMe = isStep1 || isStep2;
+              const isFull = demand >= 2 && !isSelectedByMe;
+              const isConflicted = step === 2 && !isSelectedByMe && conflictedSlots.has(slot.id);
+              const isLimitReached = slot1 !== null && slot2 !== null && !isSelectedByMe;
+              const isSameAsStep1 = step === 2 && slot.id === slot1;
 
-      {message ? <div className="rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{message}</div> : null}
-      {error ? <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div> : null}
+              type Variant = "selected" | "full" | "notAllowed" | "popular" | "open" | "disabled";
+              let variant: Variant;
+              if (isStep1 || isStep2) variant = "selected";
+              else if (isFull) variant = "full";
+              else if (isConflicted) variant = "notAllowed";
+              else if (isLimitReached || isSameAsStep1) variant = "disabled";
+              else if (demand === 1) variant = "popular";
+              else variant = "open";
 
-      <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
-        <aside className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
-          <h2 className="text-lg font-semibold text-ink">Assigned projects</h2>
-          <div className="mt-4 space-y-2">
-            {assignments.map((assignment) => (
-              <button
-                key={assignment.project.id}
-                type="button"
-                onClick={() => setSelectedProjectId(assignment.project.id)}
-                className={[
-                  "w-full rounded-[1rem] border px-4 py-3 text-left text-sm",
-                  selectedProjectId === assignment.project.id
-                    ? "border-primary bg-primary/5 text-ink"
-                    : "border-slate-200 bg-panelStrong text-muted",
-                ].join(" ")}
-              >
-                <span className="block font-semibold">{assignment.project.title}</span>
-                <span className="mt-1 block text-xs">{assignment.participant.selectedSlotIds.length} slots submitted</span>
-              </button>
-            ))}
-          </div>
-        </aside>
+              const isClickable = variant !== "full" && variant !== "disabled" && variant !== "notAllowed";
 
-        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
-          <h2 className="text-lg font-semibold text-ink">{selectedAssignment.project.title}</h2>
-          <p className="mt-3 text-sm leading-7 text-muted">{selectedAssignment.project.jobDescription || "Project details will be shared by the team."}</p>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {VIDEO_SCHEDULE_SLOTS.map((slot) => {
-              const selected = selectedSlotIds.includes(slot.id);
+              const btnClass: Record<Variant, string> = {
+                selected: "border-primary bg-primary text-white shadow-sm",
+                full: "cursor-not-allowed border-rose-200 bg-rose-50 text-rose-500",
+                notAllowed: "cursor-not-allowed border-rose-200 bg-rose-50 text-rose-400",
+                popular: "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100",
+                open: "border-slate-200 bg-white text-slate-500 hover:border-primary/50 hover:text-primary",
+                disabled: "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300",
+              };
+
+              const label = isStep1 ? "Session 1" : isStep2 ? "Session 2" : null;
+
               return (
                 <button
                   key={slot.id}
                   type="button"
-                  onClick={() => toggleSlot(slot.id)}
-                  className={[
-                    "min-h-[104px] rounded-[1rem] border px-4 py-4 text-left text-sm transition",
-                    selected
-                      ? "border-primary bg-primary/5 text-ink"
-                      : "border-slate-200 bg-panelStrong text-muted hover:bg-white",
-                  ].join(" ")}
+                  disabled={!isClickable}
+                  onClick={() => onSlotClick(slot.id)}
+                  className={`inline-flex w-full flex-col items-center justify-center gap-0.5 rounded-xl border py-2.5 text-[11px] font-semibold transition ${btnClass[variant]}`}
                 >
-                  <span className="block font-semibold text-ink">{slot.label}</span>
-                  <span className="mt-2 block text-xs">{selected ? "Selected" : "Available"}</span>
+                  {variant === "selected" ? (
+                    <>
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 12 12">
+                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span>{label}</span>
+                    </>
+                  ) : variant === "full" ? (
+                    <span>Full</span>
+                  ) : variant === "notAllowed" ? (
+                    <>
+                      <span>Not</span>
+                      <span>Allowed</span>
+                    </>
+                  ) : variant === "popular" ? (
+                    <>
+                      <span>1 joined</span>
+                      <span className="text-[9px] font-normal opacity-70">1 open</span>
+                    </>
+                  ) : variant === "open" ? (
+                    <span>Open</span>
+                  ) : null}
                 </button>
               );
             })}
           </div>
-          <textarea
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            rows={4}
-            placeholder="Notes for the scheduler"
-            className="mt-5 w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-primary"
-          />
-          <button disabled={isSaving || selectedSlotIds.length === 0} className="mt-4 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-white disabled:opacity-60">
-            {isSaving ? "Saving..." : "Confirm availability"}
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ParticipantScheduleWorkspace({
+  user,
+  profile,
+  assignments,
+  onDone,
+}: {
+  user: User;
+  profile: PortalProfile;
+  assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }>;
+  onDone?: (slot1: string, slot2: string) => void;
+}) {
+  const assignment = assignments[0] ?? null;
+  const [step, setStep] = useState<1 | 2>(1);
+  const [slot1, setSlot1] = useState<string | null>(null);
+  const [slot2, setSlot2] = useState<string | null>(null);
+  const [slotDemand, setSlotDemand] = useState<Record<string, number>>({});
+  const [pairings, setPairings] = useState<[string, string][]>([]);
+  const [isLoadingDemand, setIsLoadingDemand] = useState(true);
+  const [notes, setNotes] = useState("");
+  const [confirmedSlots, setConfirmedSlots] = useState<[string, string] | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!assignment) return;
+    const saved = assignment.participant.selectedSlotIds;
+    setSlot1(saved[0] ?? null);
+    setSlot2(saved[1] ?? null);
+    setNotes(assignment.participant.schedulingNotes);
+    setStep(saved.length >= 1 ? 2 : 1);
+  }, [assignment?.project.id]);
+
+  useEffect(() => {
+    if (!assignment || !user) return;
+    let cancelled = false;
+    setIsLoadingDemand(true);
+    void (async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch(
+          `/api/video/slot-demand?projectId=${encodeURIComponent(assignment.project.id)}&uid=${encodeURIComponent(user.uid)}`,
+          { headers: { Authorization: `Bearer ${idToken}` } },
+        );
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json() as { demand: Record<string, number>; pairings: [string, string][] };
+          setSlotDemand(data.demand ?? {});
+          setPairings(data.pairings ?? []);
+        }
+      } catch {
+        // non-fatal
+      } finally {
+        if (!cancelled) setIsLoadingDemand(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [assignment?.project.id, user.uid]);
+
+  // 8 weekdays (Mon–Fri) from tomorrow
+  const allDays = useMemo(() => {
+    const result: Array<{ date: string; dayLabel: string; slots: typeof VIDEO_SCHEDULE_SLOTS }> = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let daysAdded = 0;
+    let offset = 1;
+    while (daysAdded < 8 && offset <= 30) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + offset);
+      offset++;
+      const dow = d.getDay();
+      if (dow === 0 || dow === 6) continue;
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const slots = VIDEO_SCHEDULE_SLOTS.filter((s) => s.date === dateStr);
+      if (slots.length === 0) break;
+      result.push({ date: dateStr, dayLabel: slots[0].dayLabel, slots });
+      daysAdded++;
+    }
+    return result;
+  }, []);
+
+  // Slots that would create a double-pairing with the same person (blocked in step 2)
+  const conflictedSlots = useMemo(() => {
+    if (!slot1) return new Set<string>();
+    const conflicts = new Set<string>();
+    for (const [a, b] of pairings) {
+      if (a === slot1) conflicts.add(b);
+      if (b === slot1) conflicts.add(a);
+    }
+    return conflicts;
+  }, [slot1, pairings]);
+
+  const displayDays = allDays;
+
+  function handleSlotClick(slotId: string) {
+    const demand = slotDemand[slotId] ?? 0;
+    if (demand >= 2) return;
+    if (step === 1) {
+      setSlot1((cur) => (cur === slotId ? null : slotId));
+    } else {
+      if (slotId === slot1) return;
+      if (conflictedSlots.has(slotId)) return;
+      setSlot2((cur) => (cur === slotId ? null : slotId));
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!assignment || !slot1 || !slot2) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      await saveMyVideoAvailability({
+        projectId: assignment.project.id,
+        participantId: assignment.participant.id,
+        uid: user.uid,
+        fullName: profile.fullName,
+        email: profile.email || user.email || "",
+        selectedSlotIds: [slot1, slot2],
+        schedulingNotes: notes,
+      });
+      setConfirmedSlots([slot1, slot2]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (!assignment) {
+    return (
+      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8 text-center">
+        <h1 className="text-2xl font-semibold text-ink">No project assigned yet</h1>
+        <p className="mt-3 text-sm leading-7 text-muted">Check back soon — your project will appear here once assigned.</p>
+      </section>
+    );
+  }
+
+  if (confirmedSlots) {
+    return (
+      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8 text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
+          <svg className="h-8 w-8 text-emerald-600" fill="none" viewBox="0 0 24 24">
+            <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h2 className="mt-5 text-2xl font-semibold text-ink">Sessions confirmed!</h2>
+        <p className="mt-2 text-sm text-muted">Your availability has been submitted. We will be in touch with next steps.</p>
+        <div className="mx-auto mt-6 grid max-w-sm gap-3 text-left">
+          <div className="rounded-[1rem] border border-slate-200 bg-panelStrong px-5 py-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{getVideoSlot(confirmedSlots[0])?.label ?? confirmedSlots[0]}</p>
+          </div>
+          <div className="rounded-[1rem] border border-slate-200 bg-panelStrong px-5 py-4">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 2</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{getVideoSlot(confirmedSlots[1])?.label ?? confirmedSlots[1]}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onDone?.(confirmedSlots[0], confirmedSlots[1])}
+          className="mt-6 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+        >
+          Back to project
+        </button>
+      </section>
+    );
+  }
+
+  const description = assignment.project.jobDescription.replace(/<[^>]*>/g, "").trim();
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-[0.2em] text-muted">Scheduling</p>
+            <h1 className="mt-1.5 text-2xl font-semibold text-ink">{assignment.project.title}</h1>
+            {description ? <p className="mt-2 max-w-2xl text-sm leading-7 text-muted">{description}</p> : null}
+          </div>
+          {/* Step indicator */}
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <div className={`h-2 w-2 rounded-full ${step >= 1 ? "bg-primary" : "bg-slate-200"}`} />
+              <div className={`h-6 w-px ${step >= 2 ? "bg-primary" : "bg-slate-200"}`} />
+              <div className={`h-2 w-2 rounded-full ${step >= 2 ? "bg-primary" : "bg-slate-200"}`} />
+            </div>
+            <span className="text-xs font-medium text-muted">Step {step} of 2</span>
+          </div>
+        </div>
+        <p className="mt-3 text-xs leading-5 text-muted">
+          {step === 1
+            ? "Select your first available session — all times are in Eastern Daylight Time (EDT)."
+            : "Choose your second session. Sessions with open spots are shown — pick one to be paired with another participant."}
+        </p>
+      </section>
+
+      {error ? (
+        <div className="rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div>
+      ) : null}
+
+      <SlotGrid
+        days={displayDays}
+        slot1={slot1}
+        slot2={slot2}
+        step={step}
+        slotDemand={slotDemand}
+        conflictedSlots={conflictedSlots}
+        onSlotClick={handleSlotClick}
+        isLoading={isLoadingDemand}
+      />
+
+      {/* Sticky bottom bar — step 1 */}
+      {step === 1 && slot1 ? (
+        <div className="sticky bottom-4 z-10 flex items-center justify-between gap-4 rounded-[1.5rem] border border-primary/20 bg-white/95 px-6 py-4 shadow-lg backdrop-blur-sm">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1 locked in</p>
+            <p className="mt-0.5 truncate text-sm font-semibold text-ink">{getVideoSlot(slot1)?.label ?? slot1}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            className="shrink-0 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primaryStrong"
+          >
+            Choose session 2 →
           </button>
         </div>
-      </section>
-    </form>
+      ) : null}
+
+      {/* Notes — visible on step 2 */}
+      {step === 2 ? (
+        <section className="rounded-[1.5rem] border border-slate-200 bg-white p-5">
+          <label className="block">
+            <span className="text-sm font-medium text-ink">Notes for the scheduler <span className="font-normal text-muted">(optional)</span></span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Any scheduling preferences or constraints..."
+              className="mt-2 w-full rounded-[1rem] border border-slate-300 bg-white px-4 py-3 text-sm text-ink outline-none placeholder:text-muted/70 focus:border-primary"
+            />
+          </label>
+        </section>
+      ) : null}
+
+      {/* Step 2 confirm bar */}
+      {step === 2 ? (
+        <form onSubmit={handleSubmit}>
+          <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-4 rounded-[1.5rem] border border-slate-200 bg-white/95 px-6 py-4 shadow-lg backdrop-blur-sm">
+            <div className="flex flex-1 flex-wrap items-center gap-4 min-w-0">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1</p>
+                <p className="mt-0.5 truncate text-sm font-semibold text-ink">{getVideoSlot(slot1 ?? "")?.label ?? slot1 ?? "—"}</p>
+              </div>
+              <div className="h-8 w-px bg-slate-200" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 2</p>
+                <p className="mt-0.5 truncate text-sm font-semibold text-ink">
+                  {slot2 ? (getVideoSlot(slot2)?.label ?? slot2) : <span className="font-normal text-muted">Pick a session above</span>}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setStep(1)}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-muted transition hover:border-slate-300"
+              >
+                ← Back
+              </button>
+              <button
+                disabled={isSaving || !slot1 || !slot2}
+                className="rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {isSaving ? "Saving..." : "Confirm →"}
+              </button>
+            </div>
+          </div>
+        </form>
+      ) : null}
+    </div>
   );
 }
 
@@ -435,18 +681,60 @@ function ParticipantProjectsView({
   user,
   profile,
   assignments,
+  isLoading,
 }: {
   user: User;
   profile: PortalProfile;
   assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }>;
+  isLoading: boolean;
 }) {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [confirmedMap, setConfirmedMap] = useState<Record<string, [string, string]>>({});
+
+  function openProject(projectId: string) {
+    setSelectedProjectId(projectId);
+    setScheduleOpen(false);
+  }
 
   const selectedAssignment = assignments.find((a) => a.project.id === selectedProjectId) ?? null;
 
-  if (selectedAssignment) {
+  // Schedule workspace view
+  if (selectedAssignment && scheduleOpen) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => setScheduleOpen(false)}
+          className="text-sm font-semibold text-primary hover:underline"
+        >
+          ← Back to project
+        </button>
+        <ParticipantScheduleWorkspace
+          user={user}
+          profile={profile}
+          assignments={[selectedAssignment]}
+          onDone={(s1, s2) => {
+            setConfirmedMap((cur) => ({ ...cur, [selectedAssignment.project.id]: [s1, s2] }));
+            setScheduleOpen(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Project detail view
+  if (selectedAssignment) {
+    const { project, participant } = selectedAssignment;
+    const localConfirmed = confirmedMap[project.id] ?? null;
+    const savedSlots = participant.selectedSlotIds;
+    const isConfirmed = !!(localConfirmed ?? (savedSlots.length >= 2 ? savedSlots : null));
+    const s1 = localConfirmed?.[0] ?? savedSlots[0] ?? null;
+    const s2 = localConfirmed?.[1] ?? savedSlots[1] ?? null;
+    const description = project.jobDescription.replace(/<[^>]*>/g, "").trim();
+
+    return (
+      <div className="space-y-4">
         <button
           type="button"
           onClick={() => setSelectedProjectId(null)}
@@ -454,48 +742,243 @@ function ParticipantProjectsView({
         >
           ← Back to projects
         </button>
-        <ParticipantScheduleWorkspace user={user} profile={profile} assignments={[selectedAssignment]} />
+
+        <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
+          <h1 className="text-2xl font-semibold text-ink">{project.title}</h1>
+          {description ? <p className="mt-3 max-w-2xl text-sm leading-7 text-muted">{description}</p> : null}
+        </section>
+
+        {isConfirmed ? (
+          <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
+                <svg className="h-7 w-7 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                  <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <h2 className="mt-4 text-xl font-semibold text-ink">Schedule Confirmed</h2>
+              <p className="mt-1.5 text-sm text-muted">Your sessions have been submitted successfully.</p>
+              {s1 && s2 ? (
+                <div className="mt-6 grid w-full max-w-md gap-3 text-left">
+                  <div className="rounded-[1rem] border border-slate-200 bg-panelStrong px-5 py-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 1</p>
+                    <p className="mt-1 text-sm font-semibold text-ink">{getVideoSlot(s1)?.label ?? s1}</p>
+                  </div>
+                  <div className="rounded-[1rem] border border-slate-200 bg-panelStrong px-5 py-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-primary">Session 2</p>
+                    <p className="mt-1 text-sm font-semibold text-ink">{getVideoSlot(s2)?.label ?? s2}</p>
+                  </div>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setScheduleOpen(true)}
+                className="mt-5 rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-muted transition hover:border-slate-300"
+              >
+                Change sessions
+              </button>
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-[1.5rem] border border-slate-200 bg-white p-8">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+                <svg className="h-7 w-7 text-primary" fill="none" viewBox="0 0 24 24">
+                  <rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M16 2v4M8 2v4M3 10h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </div>
+              <h2 className="mt-4 text-xl font-semibold text-ink">Schedule your sessions</h2>
+              <p className="mt-2 max-w-xs text-sm text-muted">
+                Select two available time slots so we can pair you with another participant.
+              </p>
+              <button
+                type="button"
+                onClick={() => setScheduleOpen(true)}
+                disabled={isLoading}
+                className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primaryStrong disabled:opacity-70"
+              >
+                {isLoading ? (
+                  <>
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    Loading...
+                  </>
+                ) : "Schedule Meeting →"}
+              </button>
+            </div>
+          </section>
+        )}
       </div>
     );
   }
 
+  // Project list view
   return (
     <div className="space-y-6">
       <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
         <p className="text-xs uppercase tracking-[0.2em] text-muted">Participant workspace</p>
         <h1 className="mt-2 text-3xl font-semibold text-ink">Projects</h1>
         <p className="mt-4 text-sm leading-7 text-muted">
-          Video collection projects assigned to you appear here. Click a project to submit your availability.
+          Video collection projects assigned to you appear here.
         </p>
       </section>
 
-      {assignments.length === 0 ? (
+      {isLoading ? (
+        <section className="flex min-h-[180px] items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary" />
+        </section>
+      ) : assignments.length === 0 ? (
         <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6 text-sm leading-7 text-muted">
           No projects have been assigned to you yet. Check back soon.
         </section>
       ) : (
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {assignments.map(({ project, participant }) => (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => setSelectedProjectId(project.id)}
-              className="rounded-[1.5rem] border border-slate-200 bg-white p-5 text-left transition hover:border-primary/40 hover:shadow-panel"
-            >
-              <p className="font-semibold text-ink">{project.title}</p>
-              <p className="mt-2 text-xs text-muted">
-                {participant.selectedSlotIds.length > 0
-                  ? `${participant.selectedSlotIds.length} slots submitted`
-                  : "Availability not submitted yet"}
-              </p>
-              <span className="mt-3 inline-block rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                Open →
-              </span>
-            </button>
-          ))}
+          {assignments.map(({ project, participant }) => {
+            const localConfirmed = confirmedMap[project.id];
+            const isConfirmed = !!(localConfirmed ?? (participant.selectedSlotIds.length >= 2 ? true : false));
+            return (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => openProject(project.id)}
+                className="rounded-[1.5rem] border border-slate-200 bg-white p-5 text-left transition hover:border-primary/40 hover:shadow-panel"
+              >
+                <p className="font-semibold text-ink">{project.title}</p>
+                <p className="mt-2 text-xs text-muted">
+                  {isConfirmed ? "2 sessions selected" : "Availability not submitted yet"}
+                </p>
+                <span className={[
+                  "mt-3 inline-block rounded-full px-3 py-1 text-xs font-semibold",
+                  isConfirmed ? "bg-emerald-50 text-emerald-700" : "bg-primary/10 text-primary",
+                ].join(" ")}>
+                  {isConfirmed ? "Schedule confirmed ✓" : "Open →"}
+                </span>
+              </button>
+            );
+          })}
         </section>
       )}
     </div>
+  );
+}
+
+function isProfileComplete(p: PortalProfile) {
+  const [country = "", city = ""] = p.location.split(" | ");
+  return !!(p.fullName && country && city && p.phone);
+}
+
+function ProfileCompletionGate({
+  draft,
+  activeUser,
+  isSaving,
+  error,
+  onChange,
+  onSubmit,
+}: {
+  draft: PortalProfileDraft;
+  activeUser: User;
+  isSaving: boolean;
+  error: string | null;
+  onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const [country = "", city = ""] = draft.location.split(" | ");
+  const [phoneCode = "+1", phoneNumber = ""] = draft.phone.split(" ");
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-8">
+      <div className="w-full max-w-lg">
+        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-8 shadow-panel">
+          <p className="text-xs uppercase tracking-[0.2em] text-muted">Welcome</p>
+          <h1 className="mt-2 text-2xl font-semibold text-ink">Complete your profile</h1>
+          <p className="mt-3 text-sm leading-7 text-muted">
+            Please fill in your details before continuing. This information is required for scheduling.
+          </p>
+
+          {error ? (
+            <div className="mt-4 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div>
+          ) : null}
+
+          <form onSubmit={onSubmit} className="mt-6 space-y-4">
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-ink">Full name</span>
+              <input name="fullName" value={draft.fullName} onChange={onChange} required placeholder="Your full name" className={fieldClass} />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-ink">Email</span>
+              <input type="email" value={activeUser.email ?? ""} disabled className={fieldClass} />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-ink">Country</span>
+              <select
+                value={country}
+                onChange={(e) =>
+                  onChange({
+                    target: { name: "location", value: `${e.target.value} | ${city}` },
+                  } as ChangeEvent<HTMLSelectElement>)
+                }
+                required
+                className={fieldClass}
+              >
+                <option value="">Select country</option>
+                {countryOptions.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-ink">City</span>
+              <input
+                value={city}
+                onChange={(e) =>
+                  onChange({
+                    target: { name: "location", value: `${country} | ${e.target.value}` },
+                  } as ChangeEvent<HTMLInputElement>)
+                }
+                required
+                placeholder="Your city"
+                className={fieldClass}
+              />
+            </label>
+            <div className="grid grid-cols-[1fr_2fr] gap-3">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-ink">Phone code</span>
+                <select
+                  value={phoneCode}
+                  onChange={(e) =>
+                    onChange({
+                      target: { name: "phone", value: `${e.target.value} ${phoneNumber}` },
+                    } as ChangeEvent<HTMLSelectElement>)
+                  }
+                  className={fieldClass}
+                >
+                  {phoneCountryCodes.map((item) => (
+                    <option key={item.code} value={item.code}>{item.label} ({item.code})</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-ink">Phone number</span>
+                <input
+                  value={phoneNumber}
+                  onChange={(e) =>
+                    onChange({
+                      target: { name: "phone", value: `${phoneCode} ${e.target.value}` },
+                    } as ChangeEvent<HTMLInputElement>)
+                  }
+                  required
+                  placeholder="Your number"
+                  className={fieldClass}
+                />
+              </label>
+            </div>
+            <button disabled={isSaving} className="mt-2 w-full rounded-full bg-primary px-5 py-3.5 text-sm font-semibold text-white disabled:opacity-60">
+              {isSaving ? "Saving..." : "Continue"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </main>
   );
 }
 
@@ -513,6 +996,7 @@ export function ParticipantsPortal() {
   const [emailMode, setEmailMode] = useState<EmailMode>("signin");
   const [emailForm, setEmailForm] = useState(emptyEmailForm);
   const [assignments, setAssignments] = useState<Array<{ project: VideoProject; participant: VideoProjectParticipant }>>([]);
+  const [isLoadingAssignments, setIsLoadingAssignments] = useState(true);
   const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -597,19 +1081,39 @@ export function ParticipantsPortal() {
     };
   }, [activeUser, firebaseReady]);
 
-  useEffect(() => {
+  const loadAssignments = useCallback(async () => {
     if (!activeUser || !profile) {
       setAssignments([]);
-      return () => undefined;
+      setIsLoadingAssignments(false);
+      return;
     }
-
-    return subscribeToMyVideoAssignments(
-      activeUser.uid,
-      activeUser.email,
-      setAssignments,
-      (nextError) => setError(nextError.message),
-    );
+    setIsLoadingAssignments(true);
+    try {
+      const idToken = await activeUser.getIdToken();
+      const email = encodeURIComponent(activeUser.email ?? "");
+      const uid = encodeURIComponent(activeUser.uid);
+      const res = await fetch(`/api/video/assignments?uid=${uid}&email=${email}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) throw new Error("Could not load assignments.");
+      const data = await res.json() as { assignments: Array<{ project: VideoProject; participant: VideoProjectParticipant }> };
+      setAssignments(data.assignments);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load assignments.");
+    } finally {
+      setIsLoadingAssignments(false);
+    }
   }, [activeUser, profile]);
+
+  useEffect(() => {
+    void loadAssignments();
+  }, [loadAssignments]);
+
+  useEffect(() => {
+    if (activeView === "projects") void loadAssignments();
+    // Only re-fetch when the tab becomes active, not on every loadAssignments reference change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView]);
 
   const menuItems: PlatformSideMenuItem[] = [
     { label: "Workspace", isSectionHeader: true },
@@ -645,7 +1149,16 @@ export function ParticipantsPortal() {
         await signInWithEmailAndPassword(auth, email, emailForm.password);
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Email sign in failed.");
+      const code = (nextError as { code?: string }).code;
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+        setError("Incorrect email or password. Please check your credentials and try again.");
+      } else if (code === "auth/too-many-requests") {
+        setError("Too many failed attempts. Please wait a moment and try again.");
+      } else if (code === "auth/email-already-in-use") {
+        setError("An account with this email already exists. Try signing in instead.");
+      } else {
+        setError(nextError instanceof Error ? nextError.message : "Email sign in failed.");
+      }
     } finally {
       setIsAuthBusy(false);
     }
@@ -753,20 +1266,16 @@ export function ParticipantsPortal() {
     );
   }
 
-  if (!profile) {
+  if (!profile || !isProfileComplete(profile)) {
     return (
-      <main className="min-h-screen bg-background px-4 py-8 text-ink sm:px-8">
-        <div className="mx-auto max-w-6xl">
-          {error ? <div className="mb-4 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div> : null}
-          <ParticipantProfileForm
-            draft={draft}
-            activeUser={activeUser}
-            isSaving={isSaving}
-            onChange={onDraftChange}
-            onSubmit={onProfileSubmit}
-          />
-        </div>
-      </main>
+      <ProfileCompletionGate
+        draft={draft}
+        activeUser={activeUser}
+        isSaving={isSaving}
+        error={error}
+        onChange={onDraftChange}
+        onSubmit={onProfileSubmit}
+      />
     );
   }
 
@@ -808,7 +1317,7 @@ export function ParticipantsPortal() {
           </div>
         ) : null}
 
-        {activeView === "projects" ? <ParticipantProjectsView user={activeUser} profile={profile} assignments={assignments} /> : null}
+        {activeView === "projects" ? <ParticipantProjectsView user={activeUser} profile={profile} assignments={assignments} isLoading={isLoadingAssignments} /> : null}
         {activeView === "profile" ? (
           <ParticipantProfileForm
             draft={draft}

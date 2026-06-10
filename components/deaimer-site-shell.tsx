@@ -34,6 +34,7 @@ export type PlatformSideMenuItem = {
   label: string;
   href?: string;
   active?: boolean;
+  onClick?: () => void;
   children?: PlatformSideMenuItem[];
   isSectionHeader?: boolean;
   icon?: ReactNode;
@@ -147,6 +148,9 @@ export function DeaimerSiteShell({
   userProfile,
   onSignOut,
   themeToggle,
+  noTopGradient = false,
+  noTopBar = false,
+  noFooter = false,
 }: {
   children: ReactNode;
   platformSideMenuItems?: PlatformSideMenuItem[];
@@ -154,6 +158,9 @@ export function DeaimerSiteShell({
   userProfile?: PlatformUserProfile;
   onSignOut?: () => void;
   themeToggle?: { theme: "light" | "dark"; onToggle: () => void };
+  noTopGradient?: boolean;
+  noTopBar?: boolean;
+  noFooter?: boolean;
 }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [authUserProfile, setAuthUserProfile] = useState<PlatformUserProfile | null>(userProfile ?? null);
@@ -368,6 +375,21 @@ export function DeaimerSiteShell({
                     {item.icon ? <span className="shrink-0 opacity-60">{item.icon}</span> : null}
                     {item.label}
                   </Link>
+                ) : item.onClick ? (
+                  <button
+                    key={`${item.label}-action`}
+                    type="button"
+                    onClick={() => { item.onClick?.(); setHoveredSideMenuLabel(null); setIsMobileMenuOpen(false); }}
+                    onMouseEnter={() => setHoveredSideMenuLabel(null)}
+                    onFocus={() => setHoveredSideMenuLabel(null)}
+                    className={[
+                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+                      isActive ? "bg-[#eef4fb] text-[#1a6cd4]" : "text-slate-700 hover:bg-slate-100 hover:text-slate-900",
+                    ].join(" ")}
+                  >
+                    {item.icon ? <span className="shrink-0 opacity-60">{item.icon}</span> : null}
+                    {item.label}
+                  </button>
                 ) : (
                   <div
                     key={`${item.label}-placeholder`}
@@ -532,7 +554,7 @@ export function DeaimerSiteShell({
         </aside>
 
         {/* ── Thin top bar — fixed, offset by sidebar on lg+ ─────────────────── */}
-        <header className="fixed left-0 right-0 top-0 z-30 flex h-11 items-center border-b border-slate-200 bg-white/95 backdrop-blur-sm lg:left-[220px]">
+        {!noTopBar && <header className="fixed left-0 right-0 top-0 z-30 flex h-11 items-center border-b border-slate-200 bg-white/95 backdrop-blur-sm lg:left-[220px]">
           <div className="flex flex-1 items-center gap-2 px-3">
             {/* Hamburger — mobile only */}
             <button
@@ -589,17 +611,19 @@ export function DeaimerSiteShell({
               <div className="h-7 w-[100px] rounded-full bg-slate-100" />
             ) : null}
           </div>
-        </header>
+        </header>}
 
         {/* ── Content + footer — offset by sidebar on lg+ ────────────────────── */}
         <div className="flex min-h-screen flex-col lg:pl-[220px]">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top_left,rgba(78,163,255,0.14),transparent_42%),linear-gradient(180deg,rgba(27,79,117,0.08)_0%,rgba(247,250,255,1)_58%,rgba(255,255,255,1)_100%)]" />
-          <div className="relative z-10 flex-1 pt-11">{children}</div>
-          <footer className="relative z-10 border-t border-slate-200 bg-white px-4 py-4 text-[#5a6b85] sm:px-6">
-            <div className="mx-auto max-w-[1600px] text-sm text-slate-400">
-              © 2026 Deaimer (SMC-Private) Limited. All rights reserved.
-            </div>
-          </footer>
+          {!noTopGradient && <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top_left,rgba(78,163,255,0.14),transparent_42%),linear-gradient(180deg,rgba(27,79,117,0.08)_0%,rgba(247,250,255,1)_58%,rgba(255,255,255,1)_100%)]" />}
+          <div className={["relative z-10 flex-1", noTopBar ? "" : "pt-11"].join(" ")}>{children}</div>
+          {!noFooter && (
+            <footer className="relative z-10 border-t border-slate-200 bg-white px-4 py-4 text-[#5a6b85] sm:px-6">
+              <div className="mx-auto max-w-[1600px] text-sm text-slate-400">
+                © 2026 Deaimer (SMC-Private) Limited. All rights reserved.
+              </div>
+            </footer>
+          )}
         </div>
       </div>
     );
@@ -611,7 +635,7 @@ export function DeaimerSiteShell({
       className={`${familjenGrotesk.variable} ${fraunces.variable} flex min-h-screen flex-col bg-[#f7faff] text-ink`}
       style={fontVars}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top_left,rgba(78,163,255,0.14),transparent_42%),linear-gradient(180deg,rgba(27,79,117,0.08)_0%,rgba(247,250,255,1)_58%,rgba(255,255,255,1)_100%)]" />
+      {!noTopGradient && <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top_left,rgba(78,163,255,0.14),transparent_42%),linear-gradient(180deg,rgba(27,79,117,0.08)_0%,rgba(247,250,255,1)_58%,rgba(255,255,255,1)_100%)]" />}
 
       <header className="sticky top-0 z-30 flex h-11 items-center border-b border-slate-200 bg-white/95 backdrop-blur-sm">
         <div className="flex flex-1 items-center px-3">

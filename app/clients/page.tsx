@@ -1,10 +1,10 @@
-import { DeaimerSiteShell } from "@/components/deaimer-site-shell";
+import { Suspense } from "react";
 import { ClientAuthPortal } from "@/components/client-auth-portal";
 
 export default function ClientsPage() {
   return (
-    <DeaimerSiteShell>
+    <Suspense fallback={null}>
       <ClientAuthPortal />
-    </DeaimerSiteShell>
+    </Suspense>
   );
 }

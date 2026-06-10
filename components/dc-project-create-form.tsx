@@ -17,6 +17,7 @@ import {
   type DCPrompt,
 } from "@/lib/firebase/data-collection";
 import { mirrorVideoProjectFromDataCollection } from "@/lib/firebase/video-collection";
+import { subscribeToClientApprovals } from "@/lib/firebase/client-access";
 import { getFirebaseClientServices, isFirebaseConfigured } from "@/lib/firebase/client";
 import { isSuperAdminEmail } from "@/lib/auth/access-control";
 
@@ -596,6 +597,7 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [companies, setCompanies] = useState<string[]>([]);
 
   useEffect(() => {
     if (!isFirebaseConfigured()) { setAuthLoading(false); return; }
@@ -605,6 +607,17 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
       setAuthLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!authorized) return;
+    subscribeToClientApprovals((records) => {
+      const names = records
+        .map((r) => r.company.trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      setCompanies([...new Set(names)]);
+    });
+  }, [authorized]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -876,14 +889,18 @@ export function DCProjectCreateForm({ projectId }: { projectId?: string }) {
                     required
                   />
                 </Field>
-                <Field label="Client name" required>
-                  <input
-                    className={inputCls}
-                    placeholder="e.g. Acme AI"
+                <Field label="Company" required>
+                  <select
+                    className={selectCls}
                     value={form.client}
                     onChange={(e) => set("client", e.target.value)}
                     required
-                  />
+                  >
+                    <option value="">Select company…</option>
+                    {companies.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                 </Field>
               </div>
 

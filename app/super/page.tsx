@@ -19,10 +19,11 @@ export default async function SuperAdminPage({
       ? resolvedSearchParams.view
       : "overview";
   const activeTarget =
-    resolvedSearchParams.target === "admins" ||
+    resolvedSearchParams.target === "company" ||
+    resolvedSearchParams.target === "admin" ||
     resolvedSearchParams.target === "super"
       ? resolvedSearchParams.target
-      : "clients";
+      : "company";
   const activeMode =
     resolvedSearchParams.mode === "new" || resolvedSearchParams.mode === "edit"
       ? resolvedSearchParams.mode
@@ -42,8 +43,7 @@ export default async function SuperAdminPage({
   const activeDCSection: DCAdminSection =
     resolvedSearchParams.section === "projects" ||
     resolvedSearchParams.section === "speakers" ||
-    resolvedSearchParams.section === "sessions" ||
-    resolvedSearchParams.section === "video"
+    resolvedSearchParams.section === "sessions"
       ? resolvedSearchParams.section
       : "projects";
 
@@ -146,11 +146,6 @@ export default async function SuperAdminPage({
       label: "Sessions",
       href: "/super?view=data-collection&section=sessions",
       active: activeView === "data-collection" && activeDCSection === "sessions",
-    },
-    {
-      label: "Video projects",
-      href: "/super?view=data-collection&section=video",
-      active: activeView === "data-collection" && activeDCSection === "video",
     },
     {
       label: "Evaluation & Transcription",

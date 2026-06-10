@@ -18,6 +18,7 @@ type PlatformAuthPageProps = {
   oauthAction?: ReactNode;
   secondaryAction?: ReactNode;
   hideForm?: boolean;
+  hideEmailField?: boolean;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onConfirmPasswordChange?: (value: string) => void;
@@ -40,6 +41,7 @@ export function PlatformAuthPage({
   oauthAction,
   secondaryAction,
   hideForm = false,
+  hideEmailField = false,
   onEmailChange,
   onPasswordChange,
   onConfirmPasswordChange,
@@ -140,19 +142,21 @@ export function PlatformAuthPage({
           ) : null}
 
           {!hideForm && <form onSubmit={onSubmit}>
-            <label className="mb-[18px] block">
-              <span className="mb-[7px] block text-[13px] font-medium text-[#1f3045]">
-                Email <span className="text-[#2b85f0]">*</span>
-              </span>
-              <input
-                type="email"
-                required
-                autoComplete={emailAutocomplete}
-                value={email}
-                onChange={(event) => onEmailChange(event.target.value)}
-                className="w-full rounded-[10px] border border-[#e5ecf3] bg-white px-[14px] py-3 text-sm text-[#0a1628] outline-none transition placeholder:text-[#c4cfdb] focus:border-[#4ea3ff] focus:shadow-[0_0_0_3px_rgba(43,133,240,0.12)]"
-              />
-            </label>
+            {!hideEmailField && (
+              <label className="mb-[18px] block">
+                <span className="mb-[7px] block text-[13px] font-medium text-[#1f3045]">
+                  Email <span className="text-[#2b85f0]">*</span>
+                </span>
+                <input
+                  type="email"
+                  required
+                  autoComplete={emailAutocomplete}
+                  value={email}
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  className="w-full rounded-[10px] border border-[#e5ecf3] bg-white px-[14px] py-3 text-sm text-[#0a1628] outline-none transition placeholder:text-[#c4cfdb] focus:border-[#4ea3ff] focus:shadow-[0_0_0_3px_rgba(43,133,240,0.12)]"
+                />
+              </label>
+            )}
 
             <label className="mb-[18px] block">
               <span className="mb-[7px] block text-[13px] font-medium text-[#1f3045]">
