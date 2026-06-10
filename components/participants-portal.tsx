@@ -543,8 +543,8 @@ function ParticipantScheduleWorkspace({
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     let daysAdded = 0;
-    let offset = 1;
-    while (daysAdded < 8 && offset <= 30) {
+    let offset = 2;
+    while (daysAdded < 6 && offset <= 30) {
       const d = new Date(today);
       d.setDate(today.getDate() + offset);
       offset++;

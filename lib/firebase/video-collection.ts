@@ -32,7 +32,7 @@ function buildVideoScheduleSlots(): VideoScheduleSlot[] {
   const slots: VideoScheduleSlot[] = [];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  for (let i = 0; i <= 18; i++) {
+  for (let i = 0; i <= 20; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
     const dateStr = [
