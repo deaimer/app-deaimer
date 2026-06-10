@@ -530,8 +530,8 @@ function ParticipantScheduleWorkspace({
     assignment.meetings.forEach((m) => { if (m.meetingUrl) locked.add(m.slotId); });
     const hasMeeting = (sid: string) => assignment.meetings.some((m) => m.slotId === sid);
 
-    let initSlot1 = saved[0] ?? null;
-    let initSlot2 = saved[1] ?? null;
+    let initSlot1: string | null = saved[0] ?? null;
+    let initSlot2: string | null = saved[1] ?? null;
 
     // Clear expired+unmatched slots (not locked by client URL)
     if (initSlot1 && !locked.has(initSlot1) && isSlotExpired(initSlot1) && !hasMeeting(initSlot1)) initSlot1 = null;
@@ -571,27 +571,63 @@ function ParticipantScheduleWorkspace({
     return () => { cancelled = true; };
   }, [assignment?.project.id, user.uid]);
 
+  const savedSlotIds = assignment?.participant.selectedSlotIds ?? [];
+
   const allDays = useMemo(() => {
-    const result: Array<{ date: string; dayLabel: string; slots: typeof VIDEO_SCHEDULE_SLOTS }> = [];
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const toDateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    const dates = new Set<string>();
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    // Always include tomorrow if it's a weekday (bookable near-future slot)
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    if (tomorrow.getDay() !== 0 && tomorrow.getDay() !== 6) {
+      const tomorrowStr = toDateStr(tomorrow);
+      if (VIDEO_SCHEDULE_SLOTS.some((s) => s.date === tomorrowStr)) {
+        dates.add(tomorrowStr);
+      }
+    }
+
+    // 6 fresh future weekdays starting from day-after-tomorrow
     let daysAdded = 0;
     let offset = 2;
     while (daysAdded < 6 && offset <= 30) {
       const d = new Date(today);
       d.setDate(today.getDate() + offset);
       offset++;
-      const dow = d.getDay();
-      if (dow === 0 || dow === 6) continue;
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      const slots = VIDEO_SCHEDULE_SLOTS.filter((s) => s.date === dateStr);
-      if (slots.length === 0) break;
-      result.push({ date: dateStr, dayLabel: slots[0].dayLabel, slots });
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      const dateStr = toDateStr(d);
+      if (!VIDEO_SCHEDULE_SLOTS.some((s) => s.date === dateStr)) break;
+      dates.add(dateStr);
       daysAdded++;
     }
-    return result;
-  }, []);
+
+    // Always include already-booked slot dates (past or within buffer)
+    for (const slotId of savedSlotIds) {
+      const m = /^(\d{4}-\d{2}-\d{2})/.exec(slotId);
+      if (m) dates.add(m[1]);
+    }
+
+    return [...dates].sort().map((dateStr) => {
+      const fromLib = VIDEO_SCHEDULE_SLOTS.filter((s) => s.date === dateStr);
+      if (fromLib.length > 0) return { date: dateStr, dayLabel: fromLib[0].dayLabel, slots: fromLib };
+      const [y, mo, d] = dateStr.split("-").map(Number);
+      const dayLabel = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" })
+        .format(new Date(y, mo - 1, d));
+      return {
+        date: dateStr,
+        dayLabel,
+        slots: (["9AM", "11AM", "1PM"] as const).map((time) => ({
+          id: `${dateStr}-${time}`, date: dateStr, time, dayLabel, label: `${dayLabel} · ${time} EDT`,
+        })),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSlotIds.join(",")]);
 
   const conflictedSlots = useMemo(() => {
     if (!slot1) return new Set<string>();
