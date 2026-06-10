@@ -476,7 +476,7 @@ export function ClientAuthPortal() {
         onSignOut={() => void onSignOut()}
         themeToggle={{ theme: clientTheme, onToggle: () => changeTheme(clientTheme === "dark" ? "light" : "dark") }}
       >
-        <div className="mx-auto max-w-6xl px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl px-4 pb-10 pt-4 sm:px-6 lg:px-8">
           {errorMessage ? (
             <div className="mb-4 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
               {errorMessage}

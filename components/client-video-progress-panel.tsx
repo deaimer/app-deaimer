@@ -543,7 +543,7 @@ function ProjectListView({
   const empty = !loading && videoProjects.length === 0 && nonVideoDc.length === 0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pt-4">
       <section className="rounded-[1.5rem] border border-slate-200 bg-white p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primarySoft">Workspace</p>
         <h1 className="mt-2 text-3xl font-semibold text-ink">Projects</h1>

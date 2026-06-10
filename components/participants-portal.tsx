@@ -1399,7 +1399,7 @@ export function ParticipantsPortal() {
       onSignOut={() => void onSignOut()}
       themeToggle={{ theme, onToggle: () => changeTheme(theme === "dark" ? "light" : "dark") }}
     >
-      <div className="mx-auto max-w-6xl px-4 pb-10 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl px-4 pb-10 pt-4 sm:px-6 lg:px-8">
         {error ? <div className="mb-4 rounded-[1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{error}</div> : null}
         {message ? <div className="mb-4 rounded-[1rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{message}</div> : null}
 
