@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAuth } from "firebase/auth";
 import { ArrowLeft, ChevronRight, ExternalLink } from "lucide-react";
 import {
@@ -78,6 +78,19 @@ const TYPE_CLS: Record<string, string> = {
 const TYPE_LABEL: Record<string, string> = {
   video: "Video", conversational: "Conversational", utterance: "Utterance",
 };
+
+function slotShortLabel(slotId: string): string {
+  const slot = getVideoSlot(slotId);
+  const parse = (date: string, time: string) => {
+    const [y, mo, d] = date.split("-").map(Number);
+    const day = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(y, mo - 1, d));
+    return `${day} · ${time}`;
+  };
+  if (slot) return parse(slot.date, slot.time);
+  const m = /^(\d{4}-\d{2}-\d{2})-(.+)$/.exec(slotId);
+  if (m) return parse(m[1], m[2]);
+  return slotId;
+}
 
 function slotLabel(meeting: VideoMeeting): string {
   const slot = getVideoSlot(meeting.slotId);
@@ -410,12 +423,21 @@ function SchedulingListView({
 function ParticipantsListView({
   project,
   participants,
+  meetings,
   onBack,
 }: {
   project: VideoProject;
   participants: VideoProjectParticipant[];
+  meetings: VideoMeeting[];
   onBack: () => void;
 }) {
+  const filledSlotIds = useMemo(
+    () => new Set(computeFilledSlots(participants, meetings).map((fs) => fs.slotId)),
+    [participants, meetings],
+  );
+
+  const submittedCount = participants.filter((p) => p.selectedSlotIds.length > 0).length;
+
   return (
     <div className="space-y-4 pt-4">
       <div className="flex items-center gap-3">
@@ -423,6 +445,11 @@ function ParticipantsListView({
         <h2 className="text-base font-semibold text-ink">
           Participants{participants.length > 0 ? ` (${participants.length})` : ""}
         </h2>
+        {participants.length > 0 && (
+          <span className="rounded-full bg-panelStrong px-2 py-0.5 text-xs text-muted">
+            {submittedCount}/{participants.length} submitted
+          </span>
+        )}
       </div>
       {participants.length === 0 ? (
         <div className="rounded-[1.5rem] border border-slate-200 bg-white px-6 py-12 text-center text-sm text-muted">
@@ -440,6 +467,22 @@ function ParticipantsListView({
                   {p.fullName || p.email || "Unnamed"}
                 </p>
                 {p.email ? <p className="truncate text-xs text-muted">{p.email}</p> : null}
+              </div>
+              <div className="shrink-0 text-right">
+                {p.selectedSlotIds.length === 0 ? (
+                  <span className="text-[11px] font-semibold text-muted">Awaiting</span>
+                ) : (
+                  <div className="flex flex-col items-end gap-0.5">
+                    {p.selectedSlotIds.map((sid) => {
+                      const matched = filledSlotIds.has(sid);
+                      return (
+                        <span key={sid} className={`text-[11px] font-semibold ${matched ? "text-blue-700" : "text-emerald-700"}`}>
+                          {matched ? "Matched" : "Submitted"} {slotShortLabel(sid)}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -715,6 +758,7 @@ export function ClientVideoProgressPanel({
       <ParticipantsListView
         project={selectedProject}
         participants={participants}
+        meetings={meetings}
         onBack={() => setScreen("project")}
       />
     );

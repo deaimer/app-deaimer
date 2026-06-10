@@ -1156,6 +1156,7 @@ export function ParticipantsPortal() {
   const [isSaving, setIsSaving] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isDeletingProfile, setIsDeletingProfile] = useState(false);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -1182,6 +1183,8 @@ export function ParticipantsPortal() {
       const { auth } = getFirebaseClientServices();
       unsubscribe = onAuthStateChanged(auth, (user) => {
         if (cancelled) return;
+        if (user) setIsLoadingProfile(true);
+        else setIsLoadingProfile(false);
         setActiveUser(user);
         setAuthReady(true);
       });
@@ -1194,7 +1197,7 @@ export function ParticipantsPortal() {
   }, [firebaseReady, hasMounted]);
 
   useEffect(() => {
-    if (!activeUser || !firebaseReady) { setProfile(null); return; }
+    if (!activeUser || !firebaseReady) { setProfile(null); setIsLoadingProfile(false); return; }
     let cancelled = false;
     void getPortalProfile(activeUser.uid, "participants")
       .then((existing) => {
@@ -1203,7 +1206,8 @@ export function ParticipantsPortal() {
         setDraft(existing ?? createProfileDraft(activeUser, "participants"));
         setIsEditingProfile(!existing);
       })
-      .catch((nextError) => setError(nextError instanceof Error ? nextError.message : "Could not load profile."));
+      .catch((nextError) => setError(nextError instanceof Error ? nextError.message : "Could not load profile."))
+      .finally(() => { if (!cancelled) setIsLoadingProfile(false); });
     return () => { cancelled = true; };
   }, [activeUser, firebaseReady]);
 
@@ -1353,7 +1357,7 @@ export function ParticipantsPortal() {
     }
   }
 
-  if (!hasMounted || !authReady) {
+  if (!hasMounted || !authReady || (!!activeUser && isLoadingProfile)) {
     return <div className="flex min-h-screen items-center justify-center bg-panelStrong"><div className="h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-primary" /></div>;
   }
 
