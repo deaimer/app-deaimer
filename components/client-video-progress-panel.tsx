@@ -473,10 +473,11 @@ function ParticipantsListView({
                   <span className="text-[11px] font-semibold text-muted">Awaiting</span>
                 ) : (
                   <div className="flex flex-col items-end gap-0.5">
-                    {p.selectedSlotIds.map((sid) => {
+                    {p.selectedSlotIds.map((sid, i) => {
                       const matched = filledSlotIds.has(sid);
                       return (
-                        <span key={sid} className={`text-[11px] font-semibold ${matched ? "text-blue-700" : "text-emerald-700"}`}>
+                        <span key={sid} className={`text-[11px] font-semibold ${matched ? "text-emerald-700" : "text-blue-700"}`}>
+                          <span className="text-muted font-normal">Session {i + 1}: </span>
                           {matched ? "Matched" : "Submitted"} {slotShortLabel(sid)}
                         </span>
                       );
